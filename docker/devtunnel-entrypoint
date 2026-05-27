@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+show_help() {
+    cat <<'EOF'
+devtunnel container helper
+
+Usage:
+  login [microsoft|github]      Login with device-code flow
+  microsoft-login               Login with Microsoft/Entra ID device-code flow
+  github-login                  Login with GitHub device-code flow
+  logout                        Clear the cached login
+  status                        Show current login status
+  host [devtunnel args...]      Host a tunnel using PORTS/TUNNEL_ID env defaults
+  connect [TUNNEL_ID] [args...] Connect to a tunnel
+  raw <devtunnel args...>       Run the devtunnel CLI directly
+
+Environment:
+  LOGIN_PROVIDER=microsoft|github Provider used by bare "login"
+  PORTS=3140,8080               Local ports to expose when -p/--port is omitted
+  TUNNEL_ID=my-tunnel           Existing tunnel id to host/connect
+  ALLOW_ANONYMOUS=true          Add --allow-anonymous
+  PROTOCOL=http|https|auto      Add --protocol
+  EXPIRATION=2d                 Add --expiration
+  VERBOSE=true                  Add --verbose
+
+Examples:
+  login microsoft
+  login github
+  host
+  PORTS=8080 ALLOW_ANONYMOUS=true host
+  connect my-tunnel
+  raw user show
+EOF
+}
+
+is_true() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+has_port_argument() {
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            -p|--port|--port=*|--port-number|--port-number=*|--port-numbers|--port-numbers=*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+host_command() {
+    shift
+
+    local args=("host")
+    local port
+    local ports="${PORTS:-${PORT:-3140}}"
+
+    if [[ -n "${TUNNEL_ID:-}" ]]; then
+        args+=("${TUNNEL_ID}")
+    fi
+
+    if ! has_port_argument "$@"; then
+        ports="${ports//,/ }"
+        for port in $ports; do
+            args+=("-p" "$port")
+        done
+    fi
+
+    if [[ -n "${PROTOCOL:-}" ]]; then
+        args+=("--protocol" "$PROTOCOL")
+    fi
+
+    if [[ -n "${EXPIRATION:-}" ]]; then
+        args+=("--expiration" "$EXPIRATION")
+    fi
+
+    if is_true "${ALLOW_ANONYMOUS:-false}" || is_true "${ANONYMOUS:-false}"; then
+        args+=("--allow-anonymous")
+    fi
+
+    if is_true "${VERBOSE:-false}"; then
+        args+=("--verbose")
+    fi
+
+    exec devtunnel "${args[@]}" "$@"
+}
+
+connect_command() {
+    shift
+
+    local args=("connect")
+
+    if [[ -n "${TUNNEL_ID:-}" ]]; then
+        args+=("${TUNNEL_ID}")
+    elif [[ $# -gt 0 && "${1:0:1}" != "-" ]]; then
+        args+=("$1")
+        shift
+    fi
+
+    exec devtunnel "${args[@]}" "$@"
+}
+
+login_command() {
+    shift
+
+    local provider="${LOGIN_PROVIDER:-microsoft}"
+
+    case "${1:-}" in
+        microsoft|ms|entra|aad)
+            provider="microsoft"
+            shift
+            ;;
+        github|gh)
+            provider="github"
+            shift
+            ;;
+        --github|-g)
+            provider="github"
+            shift
+            ;;
+        --microsoft|--entra|--aad)
+            provider="microsoft"
+            shift
+            ;;
+        "")
+            ;;
+        -*)
+            ;;
+        *)
+            echo "Unsupported login provider: $1" >&2
+            echo "Use: login microsoft or login github" >&2
+            exit 2
+            ;;
+    esac
+
+    case "$provider" in
+        microsoft|ms|entra|aad)
+            exec devtunnel user login -e -d "$@"
+            ;;
+        github|gh)
+            exec devtunnel user login -g -d "$@"
+            ;;
+        *)
+            echo "Unsupported login provider: $provider" >&2
+            echo "Use: login microsoft or login github" >&2
+            exit 2
+            ;;
+    esac
+}
+
+case "${1:-help}" in
+    ""|help|--help|-h)
+        show_help
+        ;;
+    login)
+        login_command "$@"
+        ;;
+    microsoft-login|login-microsoft)
+        shift
+        exec devtunnel user login -e -d "$@"
+        ;;
+    github-login)
+        shift
+        exec devtunnel user login -g -d "$@"
+        ;;
+    logout)
+        shift
+        exec devtunnel user logout "$@"
+        ;;
+    status)
+        shift
+        exec devtunnel user show "$@"
+        ;;
+    host)
+        host_command "$@"
+        ;;
+    connect)
+        connect_command "$@"
+        ;;
+    raw)
+        shift
+        exec devtunnel "$@"
+        ;;
+    *)
+        exec devtunnel "$@"
+        ;;
+esac

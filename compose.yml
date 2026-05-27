@@ -1,0 +1,22 @@
+services:
+  devtunnel:
+    image: devtunnel:local
+    build:
+      context: .
+    network_mode: host
+    stdin_open: true
+    tty: true
+    volumes:
+      - devtunnel-home:/home/devtunnel
+    environment:
+      PORTS: "${PORTS:-3140}"
+      TUNNEL_ID: "${TUNNEL_ID:-}"
+      ALLOW_ANONYMOUS: "${ALLOW_ANONYMOUS:-false}"
+      PROTOCOL: "${PROTOCOL:-}"
+      EXPIRATION: "${EXPIRATION:-}"
+      VERBOSE: "${VERBOSE:-false}"
+      LOGIN_PROVIDER: "${LOGIN_PROVIDER:-microsoft}"
+    command: ["host"]
+
+volumes:
+  devtunnel-home:
