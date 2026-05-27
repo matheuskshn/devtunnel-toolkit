@@ -1,48 +1,57 @@
-IMAGE ?= devtunnel:local
+DEVTUNNEL_IMAGE ?= devtunnel-toolkit:local
+SQUID_IMAGE ?= devtunnel-toolkit-squid:local
+OPENVPN_IMAGE ?= devtunnel-toolkit-openvpn:local
 VOLUME ?= devtunnel-home
-PORTS ?= 3140
-TTY ?= $(shell [ -t 0 ] && printf '%s' '-it')
+PORTS ?= 3140,1194
+TTY ?= $(shell [ -t 0 ] || printf '%s' '-T')
 
-RUN = docker run --rm $(TTY) \
-	--network host \
-	-v $(VOLUME):/home/devtunnel \
-	-e PORTS="$(PORTS)" \
-	-e TUNNEL_ID \
-	-e ALLOW_ANONYMOUS \
-	-e PROTOCOL \
-	-e EXPIRATION \
-	-e VERBOSE \
-	-e LOGIN_PROVIDER \
-	$(IMAGE)
+RUN_DEVTUNNEL = PORTS="$(PORTS)" docker compose run --rm $(TTY) --no-deps devtunnel
 
-.PHONY: build login login-microsoft login-github logout status host connect shell help
+.PHONY: build login login-microsoft login-github logout status host connect up down logs proxy vpn ovpn-client shell help
 
 build:
-	@docker build -t $(IMAGE) .
+	@docker compose build
 
 login: build
-	@$(RUN) login microsoft
+	@$(RUN_DEVTUNNEL) login microsoft
 
 login-microsoft: build
-	@$(RUN) login microsoft
+	@$(RUN_DEVTUNNEL) login microsoft
 
 login-github: build
-	@$(RUN) login github
+	@$(RUN_DEVTUNNEL) login github
 
 logout:
-	@$(RUN) logout
+	@$(RUN_DEVTUNNEL) logout
 
 status:
-	@$(RUN) status
+	@$(RUN_DEVTUNNEL) status
 
-host: build
-	@$(RUN) host
+host: up
+
+up: build
+	@PORTS="$(PORTS)" docker compose up
 
 connect:
-	@$(RUN) connect $(TUNNEL_ID)
+	@$(RUN_DEVTUNNEL) connect $(TUNNEL_ID)
+
+down:
+	@docker compose down
+
+logs:
+	@docker compose logs -f
+
+proxy: build
+	@docker compose up squid devtunnel
+
+vpn: build
+	@docker compose up openvpn devtunnel
+
+ovpn-client: build
+	@docker compose run --rm $(TTY) openvpn client
 
 shell: build
-	@docker run --rm $(TTY) --network host -v $(VOLUME):/home/devtunnel --entrypoint /bin/bash $(IMAGE)
+	@docker compose run --rm $(TTY) --entrypoint /bin/bash devtunnel
 
 help:
-	@$(RUN) help
+	@$(RUN_DEVTUNNEL) help

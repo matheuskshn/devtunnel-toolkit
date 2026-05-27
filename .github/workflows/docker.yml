@@ -25,12 +25,31 @@ env:
   DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
   DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
   DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
-  DOCKERHUB_REPOSITORY: ${{ vars.DOCKERHUB_REPOSITORY }}
 
 jobs:
   build:
-    name: Build image
+    name: Build ${{ matrix.title }}
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - title: DevTunnel Toolkit
+            image: devtunnel-toolkit
+            dockerfile: Dockerfile
+            context: .
+            description: Developer toolkit for Microsoft Dev Tunnels
+          - title: Squid proxy
+            image: devtunnel-toolkit-squid
+            dockerfile: images/squid/Dockerfile
+            context: images/squid
+            description: Squid proxy for DevTunnel Toolkit
+          - title: OpenVPN server
+            image: devtunnel-toolkit-openvpn
+            dockerfile: images/openvpn/Dockerfile
+            context: images/openvpn
+            description: OpenVPN server for DevTunnel Toolkit
 
     steps:
       - name: Checkout
@@ -46,21 +65,16 @@ jobs:
         id: images
         shell: bash
         run: |
-          repository="${GITHUB_REPOSITORY,,}"
-          image_name="${GITHUB_REPOSITORY#*/}"
-          image_name="${image_name,,}"
-
-          dockerhub_repository="${DOCKERHUB_REPOSITORY:-$image_name}"
-          dockerhub_repository="${dockerhub_repository,,}"
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
           dockerhub_namespace="${DOCKERHUB_NAMESPACE:-$DOCKERHUB_USERNAME}"
           dockerhub_namespace="${dockerhub_namespace,,}"
 
           {
             echo "images<<EOF"
-            echo "ghcr.io/${repository}"
-          if [[ -n "$DOCKERHUB_USERNAME" && -n "$DOCKERHUB_TOKEN" && -n "$dockerhub_namespace" ]]; then
-            echo "docker.io/${dockerhub_namespace}/${dockerhub_repository}"
-          fi
+            echo "ghcr.io/${owner}/${{ matrix.image }}"
+            if [[ -n "$DOCKERHUB_USERNAME" && -n "$DOCKERHUB_TOKEN" && -n "$dockerhub_namespace" ]]; then
+              echo "docker.io/${dockerhub_namespace}/${{ matrix.image }}"
+            fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -81,8 +95,8 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
           labels: |
-            org.opencontainers.image.title=devtunnel-container
-            org.opencontainers.image.description=Container image for the Microsoft devtunnel CLI
+            org.opencontainers.image.title=${{ matrix.image }}
+            org.opencontainers.image.description=${{ matrix.description }}
 
       - name: Login to GitHub Container Registry
         if: github.event_name != 'pull_request'
@@ -102,13 +116,14 @@ jobs:
       - name: Build and publish image
         uses: docker/build-push-action@v7
         with:
-          context: .
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
           provenance: true
           sbom: true

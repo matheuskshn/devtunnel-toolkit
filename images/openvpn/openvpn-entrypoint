@@ -1,0 +1,204 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+OVPN_DIR="${OVPN_DIR:-/etc/openvpn}"
+EASYRSA_DIR="${OVPN_DIR}/easy-rsa"
+PKI_DIR="${EASYRSA_DIR}/pki"
+CLIENTS_DIR="${OVPN_DIR}/clients"
+
+OVPN_PORT="${OVPN_PORT:-1194}"
+OVPN_LISTEN_ADDRESS="${OVPN_LISTEN_ADDRESS:-127.0.0.1}"
+OVPN_PROTO="${OVPN_PROTO:-tcp}"
+OVPN_NETWORK="${OVPN_NETWORK:-10.8.0.0}"
+OVPN_NETMASK="${OVPN_NETMASK:-255.255.255.0}"
+OVPN_CIDR="${OVPN_CIDR:-10.8.0.0/24}"
+OVPN_CLIENT_NAME="${OVPN_CLIENT_NAME:-devtunnel-toolkit}"
+OVPN_REMOTE_HOST="${OVPN_REMOTE_HOST:-127.0.0.1}"
+OVPN_REMOTE_PORT="${OVPN_REMOTE_PORT:-1194}"
+OVPN_PUSH_ROUTES="${OVPN_PUSH_ROUTES:-10.0.0.0 255.0.0.0,172.16.0.0 255.240.0.0,192.168.0.0 255.255.0.0}"
+OVPN_DNS="${OVPN_DNS:-}"
+OVPN_REDIRECT_GATEWAY="${OVPN_REDIRECT_GATEWAY:-false}"
+
+is_true() {
+    case "${1:-}" in
+        1|true|TRUE|yes|YES|on|ON) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+ensure_dirs() {
+    mkdir -p "$OVPN_DIR" "$CLIENTS_DIR"
+}
+
+ensure_pki() {
+    ensure_dirs
+
+    if [[ -f "${PKI_DIR}/ca.crt" && -f "${PKI_DIR}/issued/server.crt" && -f "${PKI_DIR}/private/server.key" ]]; then
+        return
+    fi
+
+    rm -rf "$EASYRSA_DIR"
+    make-cadir "$EASYRSA_DIR" >&2
+
+    pushd "$EASYRSA_DIR" >/dev/null
+    export EASYRSA_BATCH=1
+    export EASYRSA_REQ_CN="${OVPN_CA_CN:-DevTunnel Toolkit CA}"
+
+    ./easyrsa init-pki >&2
+    ./easyrsa build-ca nopass >&2
+    unset EASYRSA_REQ_CN
+    ./easyrsa build-server-full server nopass >&2
+    ./easyrsa build-client-full "$OVPN_CLIENT_NAME" nopass >&2
+    openvpn --genkey secret "${PKI_DIR}/ta.key" >&2
+    popd >/dev/null
+}
+
+render_server_config() {
+    local proto="tcp-server"
+
+    if [[ "$OVPN_PROTO" == "udp" ]]; then
+        proto="udp"
+    fi
+
+    {
+        printf 'port %s\n' "$OVPN_PORT"
+        if [[ -n "$OVPN_LISTEN_ADDRESS" ]]; then
+            printf 'local %s\n' "$OVPN_LISTEN_ADDRESS"
+        fi
+        printf 'proto %s\n' "$proto"
+        printf 'dev tun\n'
+        printf 'topology subnet\n'
+        printf 'server %s %s\n' "$OVPN_NETWORK" "$OVPN_NETMASK"
+        printf 'ifconfig-pool-persist %s/ipp.txt\n' "$OVPN_DIR"
+        printf 'ca %s/ca.crt\n' "$PKI_DIR"
+        printf 'cert %s/issued/server.crt\n' "$PKI_DIR"
+        printf 'key %s/private/server.key\n' "$PKI_DIR"
+        printf 'dh none\n'
+        printf 'tls-groups secp256r1\n'
+        printf 'tls-auth %s/ta.key 0\n' "$PKI_DIR"
+        printf 'auth SHA256\n'
+        printf 'data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305\n'
+        printf 'keepalive 10 120\n'
+        printf 'persist-key\n'
+        printf 'persist-tun\n'
+        printf 'user nobody\n'
+        printf 'group nogroup\n'
+        printf 'verb 3\n'
+
+        if is_true "$OVPN_REDIRECT_GATEWAY"; then
+            printf 'push "redirect-gateway def1 bypass-dhcp"\n'
+        fi
+
+        local route
+        IFS=',' read -ra routes <<< "$OVPN_PUSH_ROUTES"
+        for route in "${routes[@]}"; do
+            route="${route#"${route%%[![:space:]]*}"}"
+            route="${route%"${route##*[![:space:]]}"}"
+            if [[ -n "$route" ]]; then
+                printf 'push "route %s"\n' "$route"
+            fi
+        done
+
+        local dns
+        IFS=',' read -ra dns_servers <<< "$OVPN_DNS"
+        for dns in "${dns_servers[@]}"; do
+            dns="${dns#"${dns%%[![:space:]]*}"}"
+            dns="${dns%"${dns##*[![:space:]]}"}"
+            if [[ -n "$dns" ]]; then
+                printf 'push "dhcp-option DNS %s"\n' "$dns"
+            fi
+        done
+
+        if [[ -n "${OVPN_EXTRA_CONFIG:-}" ]]; then
+            printf '%s\n' "$OVPN_EXTRA_CONFIG"
+        fi
+    } > "${OVPN_DIR}/server.conf"
+}
+
+setup_networking() {
+    sysctl -w net.ipv4.ip_forward=1 >/dev/null || true
+
+    if iptables -t nat -C POSTROUTING -s "$OVPN_CIDR" -j MASQUERADE 2>/dev/null; then
+        return
+    fi
+
+    iptables -t nat -A POSTROUTING -s "$OVPN_CIDR" -j MASQUERADE
+}
+
+ensure_client() {
+    local client_name="${1:-$OVPN_CLIENT_NAME}"
+
+    ensure_pki
+
+    if [[ ! -f "${PKI_DIR}/issued/${client_name}.crt" || ! -f "${PKI_DIR}/private/${client_name}.key" ]]; then
+        pushd "$EASYRSA_DIR" >/dev/null
+        export EASYRSA_BATCH=1
+        ./easyrsa build-client-full "$client_name" nopass >&2
+        popd >/dev/null
+    fi
+
+    render_client_config "$client_name"
+}
+
+render_client_config() {
+    local client_name="$1"
+    local client_proto="tcp-client"
+    local output="${CLIENTS_DIR}/${client_name}.ovpn"
+
+    if [[ "$OVPN_PROTO" == "udp" ]]; then
+        client_proto="udp"
+    fi
+
+    {
+        printf 'client\n'
+        printf 'dev tun\n'
+        printf 'proto %s\n' "$client_proto"
+        printf 'remote %s %s\n' "$OVPN_REMOTE_HOST" "$OVPN_REMOTE_PORT"
+        printf 'resolv-retry infinite\n'
+        printf 'nobind\n'
+        printf 'persist-key\n'
+        printf 'persist-tun\n'
+        printf 'remote-cert-tls server\n'
+        printf 'auth SHA256\n'
+        printf 'data-ciphers AES-256-GCM:AES-128-GCM:CHACHA20-POLY1305\n'
+        printf 'verb 3\n'
+        printf 'auth-nocache\n'
+        printf 'key-direction 1\n'
+        printf '<ca>\n'
+        cat "${PKI_DIR}/ca.crt"
+        printf '</ca>\n'
+        printf '<cert>\n'
+        sed -n '/BEGIN CERTIFICATE/,/END CERTIFICATE/p' "${PKI_DIR}/issued/${client_name}.crt"
+        printf '</cert>\n'
+        printf '<key>\n'
+        cat "${PKI_DIR}/private/${client_name}.key"
+        printf '</key>\n'
+        printf '<tls-auth>\n'
+        cat "${PKI_DIR}/ta.key"
+        printf '</tls-auth>\n'
+    } > "$output"
+}
+
+case "${1:-server}" in
+    server)
+        ensure_pki
+        ensure_client "$OVPN_CLIENT_NAME"
+        render_server_config
+        setup_networking
+        exec openvpn --config "${OVPN_DIR}/server.conf"
+        ;;
+    client|client-config|ovpn)
+        client_name="${2:-$OVPN_CLIENT_NAME}"
+        ensure_client "$client_name"
+        cat "${CLIENTS_DIR}/${client_name}.ovpn"
+        ;;
+    shell|bash)
+        exec /bin/bash
+        ;;
+    sh)
+        exec /bin/sh
+        ;;
+    *)
+        exec "$@"
+        ;;
+esac

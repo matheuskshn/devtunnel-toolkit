@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" != "squid" ]]; then
+    exec "$@"
+fi
+
+listen_address="${SQUID_LISTEN_ADDRESS:-127.0.0.1}"
+http_port="${SQUID_HTTP_PORT:-3140}"
+visible_hostname="${SQUID_VISIBLE_HOSTNAME:-devtunnel-toolkit-squid}"
+ssl_ports="${SQUID_SSL_PORTS:-443 563 22}"
+safe_ports="${SQUID_SAFE_PORTS:-80 21 22 443 70 210 1025-65535 280 488 591 777}"
+extra_config="${SQUID_EXTRA_CONFIG:-}"
+
+if [[ ! "$http_port" =~ ^[0-9]+$ || "$http_port" -lt 1 || "$http_port" -gt 65535 ]]; then
+    echo "SQUID_HTTP_PORT must be between 1 and 65535" >&2
+    exit 2
+fi
+
+if [[ -n "$listen_address" ]]; then
+    listen_value="${listen_address}:${http_port}"
+else
+    listen_value="${http_port}"
+fi
+
+{
+    sed \
+        -e "s|{{SQUID_HTTP_PORT}}|${listen_value}|g" \
+        -e "s|{{SQUID_VISIBLE_HOSTNAME}}|${visible_hostname}|g" \
+        -e "s|{{SQUID_SSL_PORTS}}|${ssl_ports}|g" \
+        /etc/squid/squid.conf.template
+
+    for port in $safe_ports; do
+        printf 'acl Safe_ports port %s\n' "$port"
+    done
+
+    printf '\nhttp_access deny !Safe_ports\n'
+    printf 'http_access deny CONNECT !SSL_ports\n'
+    printf 'http_access allow all\n'
+
+    if [[ -n "$extra_config" ]]; then
+        printf '\n%s\n' "$extra_config"
+    fi
+} > /tmp/squid.conf
+
+squid -k parse -f /tmp/squid.conf
+
+exec squid -N -f /tmp/squid.conf

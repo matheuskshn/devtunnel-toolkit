@@ -3,7 +3,7 @@ set -euo pipefail
 
 show_help() {
     cat <<'EOF'
-devtunnel container helper
+DevTunnel Toolkit helper
 
 Usage:
   login [microsoft|github]      Login with device-code flow
@@ -17,7 +17,7 @@ Usage:
 
 Environment:
   LOGIN_PROVIDER=microsoft|github Provider used by bare "login"
-  PORTS=3140,8080               Local ports to expose when -p/--port is omitted
+  PORTS=3140,1194               Local ports to expose when -p/--port is omitted
   TUNNEL_ID=my-tunnel           Existing tunnel id to host/connect
   ALLOW_ANONYMOUS=true          Add --allow-anonymous
   PROTOCOL=http|https|auto      Add --protocol
@@ -28,7 +28,7 @@ Examples:
   login microsoft
   login github
   host
-  PORTS=8080 ALLOW_ANONYMOUS=true host
+  PORTS=3140,1194 ALLOW_ANONYMOUS=true host
   connect my-tunnel
   raw user show
 EOF
@@ -56,7 +56,7 @@ host_command() {
 
     local args=("host")
     local port
-    local ports="${PORTS:-${PORT:-3140}}"
+    local ports="${PORTS:-${PORT:-3140,1194}}"
 
     if [[ -n "${TUNNEL_ID:-}" ]]; then
         args+=("${TUNNEL_ID}")

@@ -13,3 +13,17 @@ updates:
       interval: "weekly"
     labels:
       - "dependencies"
+
+  - package-ecosystem: "docker"
+    directory: "/images/squid"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "docker"
+    directory: "/images/openvpn"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"

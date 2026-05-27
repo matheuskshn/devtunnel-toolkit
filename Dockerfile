@@ -5,10 +5,10 @@ FROM debian:bookworm-slim
 ARG TARGETARCH
 ARG DEVTUNNEL_ENV=prod
 
-LABEL org.opencontainers.image.title="devtunnel-container" \
-      org.opencontainers.image.description="Container image for the Microsoft devtunnel CLI" \
-      org.opencontainers.image.source="https://github.com/matheuskshn/devtunnel-container" \
-      org.opencontainers.image.documentation="https://github.com/matheuskshn/devtunnel-container#readme" \
+LABEL org.opencontainers.image.title="devtunnel-toolkit" \
+      org.opencontainers.image.description="Developer toolkit for Microsoft Dev Tunnels" \
+      org.opencontainers.image.source="https://github.com/matheuskshn/devtunnel-toolkit" \
+      org.opencontainers.image.documentation="https://github.com/matheuskshn/devtunnel-toolkit#readme" \
       org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update \

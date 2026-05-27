@@ -1,0 +1,14 @@
+# Managed by DevTunnel Toolkit.
+# Based on the rhel_squid_proxy_install Ansible role defaults.
+
+http_port {{SQUID_HTTP_PORT}}
+visible_hostname {{SQUID_VISIBLE_HOSTNAME}}
+
+acl SSL_ports port {{SQUID_SSL_PORTS}}
+
+access_log /var/log/squid/access.log squid
+cache_log /var/log/squid/cache.log
+cache_store_log none
+
+cache deny all
+coredump_dir /var/cache/squid

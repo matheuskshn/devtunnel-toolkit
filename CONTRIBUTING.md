@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve `devtunnel-container`.
+Thanks for helping improve `devtunnel-toolkit`.
 
 ## Development
 
