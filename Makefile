@@ -7,7 +7,7 @@ TTY ?= $(shell [ -t 0 ] || printf '%s' '-T')
 
 RUN_DEVTUNNEL = PORTS="$(PORTS)" docker compose run --rm $(TTY) --no-deps devtunnel
 
-.PHONY: build login login-microsoft login-github logout status host connect up down logs proxy vpn ovpn-client shell help
+.PHONY: build login login-microsoft login-github logout status host connect up down reset recreate logs proxy vpn ovpn-client shell help
 
 build:
 	@docker compose build
@@ -37,6 +37,12 @@ connect:
 
 down:
 	@docker compose down
+
+reset:
+	@docker compose down --volumes --remove-orphans
+
+recreate: reset build
+	@PORTS="$(PORTS)" docker compose up -d
 
 logs:
 	@docker compose logs -f

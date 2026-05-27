@@ -130,6 +130,25 @@ Stop the toolkit:
 docker compose down
 ```
 
+Delete containers, networks, and toolkit volumes:
+
+```bash
+docker compose down --volumes --remove-orphans
+```
+
+This removes the cached DevTunnel login and OpenVPN PKI/client certificates.
+After this command, run login again and regenerate any `.ovpn` files.
+
+Equivalent Make targets:
+
+```bash
+make reset
+make recreate
+```
+
+`make reset` removes containers, networks, and volumes. `make recreate` resets,
+rebuilds, and starts the toolkit again in the background.
+
 ## Client workflow
 
 On the client machine, run the DevTunnel client:
