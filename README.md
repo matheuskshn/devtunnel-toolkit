@@ -66,6 +66,70 @@ Allow anonymous access only when you understand the exposure:
 ALLOW_ANONYMOUS=true TUNNEL_ID=my-dev-gateway make up
 ```
 
+## Docker Compose
+
+Login once with Microsoft/Entra ID:
+
+```bash
+docker compose run --rm devtunnel login microsoft
+```
+
+Or login with GitHub:
+
+```bash
+docker compose run --rm devtunnel login github
+```
+
+Start everything in the background:
+
+```bash
+docker compose up -d
+```
+
+This starts:
+
+| Service | Local endpoint |
+| --- | --- |
+| Squid proxy | `127.0.0.1:3140` |
+| OpenVPN server | `127.0.0.1:1194/tcp` |
+| DevTunnel host | ports `3140,1194` |
+
+Follow the tunnel logs:
+
+```bash
+docker compose logs -f devtunnel
+```
+
+Use a persistent tunnel ID:
+
+```bash
+TUNNEL_ID=my-dev-gateway docker compose up -d
+```
+
+Expose only the proxy:
+
+```bash
+PORTS=3140 docker compose up -d squid devtunnel
+```
+
+Expose only the VPN:
+
+```bash
+PORTS=1194 docker compose up -d openvpn devtunnel
+```
+
+Generate an OpenVPN client profile:
+
+```bash
+docker compose run --rm openvpn client > devtunnel-toolkit.ovpn
+```
+
+Stop the toolkit:
+
+```bash
+docker compose down
+```
+
 ## Client workflow
 
 On the client machine, run the DevTunnel client:
