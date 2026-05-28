@@ -15,8 +15,9 @@ services:
     volumes:
       - devtunnel-home:/home/devtunnel
     environment:
-      PORTS: "${PORTS:-3140,1194}"
+      PORTS: "${PORTS:-3140,53194}"
       TUNNEL_ID: "${TUNNEL_ID:-}"
+      DEVTUNNEL_ACCESS_TOKEN: "${DEVTUNNEL_ACCESS_TOKEN:-}"
       ALLOW_ANONYMOUS: "${ALLOW_ANONYMOUS:-false}"
       PROTOCOL: "${PROTOCOL:-}"
       EXPIRATION: "${EXPIRATION:-}"
@@ -53,7 +54,7 @@ services:
     volumes:
       - openvpn-data:/etc/openvpn
     environment:
-      OVPN_PORT: "${OVPN_PORT:-1194}"
+      OVPN_PORT: "${OVPN_PORT:-53194}"
       OVPN_LISTEN_ADDRESS: "${OVPN_LISTEN_ADDRESS:-127.0.0.1}"
       OVPN_PROTO: "${OVPN_PROTO:-tcp}"
       OVPN_NETWORK: "${OVPN_NETWORK:-10.8.0.0}"
@@ -61,7 +62,7 @@ services:
       OVPN_CIDR: "${OVPN_CIDR:-10.8.0.0/24}"
       OVPN_CLIENT_NAME: "${OVPN_CLIENT_NAME:-devtunnel-toolkit}"
       OVPN_REMOTE_HOST: "${OVPN_REMOTE_HOST:-127.0.0.1}"
-      OVPN_REMOTE_PORT: "${OVPN_REMOTE_PORT:-1194}"
+      OVPN_REMOTE_PORT: "${OVPN_REMOTE_PORT:-53194}"
       OVPN_PUSH_ROUTES: "${OVPN_PUSH_ROUTES:-10.0.0.0 255.0.0.0,172.16.0.0 255.240.0.0,192.168.0.0 255.255.0.0}"
       OVPN_DNS: "${OVPN_DNS:-}"
       OVPN_REDIRECT_GATEWAY: "${OVPN_REDIRECT_GATEWAY:-false}"

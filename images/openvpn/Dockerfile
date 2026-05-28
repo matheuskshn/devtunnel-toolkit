@@ -24,7 +24,7 @@ COPY openvpn-entrypoint /usr/local/bin/openvpn-entrypoint
 
 RUN chmod +x /usr/local/bin/openvpn-entrypoint
 
-EXPOSE 1194/tcp
+EXPOSE 53194/tcp
 
 VOLUME ["/etc/openvpn"]
 

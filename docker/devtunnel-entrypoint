@@ -11,13 +11,15 @@ Usage:
   github-login                  Login with GitHub device-code flow
   logout                        Clear the cached login
   status                        Show current login status
+  auth-check                    Verify cached login or access-token auth
   host [devtunnel args...]      Host a tunnel using PORTS/TUNNEL_ID env defaults
   connect [TUNNEL_ID] [args...] Connect to a tunnel
   raw <devtunnel args...>       Run the devtunnel CLI directly
 
 Environment:
   LOGIN_PROVIDER=microsoft|github Provider used by bare "login"
-  PORTS=3140,1194               Local ports to expose when -p/--port is omitted
+  DEVTUNNEL_ACCESS_TOKEN        Token passed to host/connect as --access-token
+  PORTS=3140,53194              Local ports to expose when -p/--port is omitted
   TUNNEL_ID=my-tunnel           Existing tunnel id to host/connect
   ALLOW_ANONYMOUS=true          Add --allow-anonymous
   PROTOCOL=http|https|auto      Add --protocol
@@ -28,7 +30,7 @@ Examples:
   login microsoft
   login github
   host
-  PORTS=3140,1194 ALLOW_ANONYMOUS=true host
+  PORTS=3140,53194 ALLOW_ANONYMOUS=true host
   connect my-tunnel
   raw user show
 EOF
@@ -51,12 +53,94 @@ has_port_argument() {
     return 1
 }
 
+has_access_token_argument() {
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            -t|--access-token|--access-token=*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+has_help_argument() {
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            -h|--help|-\?) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+access_token_value() {
+    printf '%s' "${DEVTUNNEL_ACCESS_TOKEN:-}"
+}
+
+has_cached_login() {
+    local output
+
+    if ! output="$(devtunnel user show --json 2>&1)"; then
+        printf '%s\n' "$output" >&2
+        return 1
+    fi
+
+    if printf '%s\n' "$output" | grep -qi '"status"[[:space:]]*:[[:space:]]*"Not logged in"'; then
+        return 1
+    fi
+
+    return 0
+}
+
+cached_login_check_command() {
+    if has_cached_login; then
+        devtunnel user show
+        return 0
+    fi
+
+    cat >&2 <<'EOF'
+DevTunnel login was not found in this container volume.
+
+Run one of these commands and complete the device-code flow:
+  make login-github
+  make login-microsoft
+
+Then verify it with:
+  make status
+
+If you ran "make reset" or "docker compose down --volumes", the cached login was removed.
+EOF
+    return 3
+}
+
+auth_check_command() {
+    local access_token
+    access_token="$(access_token_value)"
+
+    if [[ -n "$access_token" ]]; then
+        echo "Using DEVTUNNEL_ACCESS_TOKEN for DevTunnel authentication."
+        return 0
+    fi
+
+    cached_login_check_command
+}
+
 host_command() {
     shift
 
     local args=("host")
+    local access_token
     local port
-    local ports="${PORTS:-${PORT:-3140,1194}}"
+    local ports="${PORTS:-${PORT:-3140,53194}}"
+
+    if ! has_access_token_argument "$@"; then
+        access_token="$(access_token_value)"
+        if [[ -n "$access_token" ]]; then
+            args+=("--access-token" "$access_token")
+        else
+            auth_check_command >/dev/null
+        fi
+    fi
 
     if [[ -n "${TUNNEL_ID:-}" ]]; then
         args+=("${TUNNEL_ID}")
@@ -92,6 +176,16 @@ connect_command() {
     shift
 
     local args=("connect")
+    local access_token
+
+    if ! has_access_token_argument "$@"; then
+        access_token="$(access_token_value)"
+        if [[ -n "$access_token" ]]; then
+            args+=("--access-token" "$access_token")
+        else
+            auth_check_command >/dev/null
+        fi
+    fi
 
     if [[ -n "${TUNNEL_ID:-}" ]]; then
         args+=("${TUNNEL_ID}")
@@ -138,10 +232,16 @@ login_command() {
 
     case "$provider" in
         microsoft|ms|entra|aad)
-            exec devtunnel user login -e -d "$@"
+            if has_help_argument "$@"; then
+                exec devtunnel user login -e -d "$@"
+            fi
+            devtunnel user login -e -d "$@"
             ;;
         github|gh)
-            exec devtunnel user login -g -d "$@"
+            if has_help_argument "$@"; then
+                exec devtunnel user login -g -d "$@"
+            fi
+            devtunnel user login -g -d "$@"
             ;;
         *)
             echo "Unsupported login provider: $provider" >&2
@@ -149,6 +249,10 @@ login_command() {
             exit 2
             ;;
     esac
+
+    echo
+    echo "Checking cached login..."
+    cached_login_check_command
 }
 
 case "${1:-help}" in
@@ -160,11 +264,11 @@ case "${1:-help}" in
         ;;
     microsoft-login|login-microsoft)
         shift
-        exec devtunnel user login -e -d "$@"
+        login_command login microsoft "$@"
         ;;
-    github-login)
+    github-login|login-github)
         shift
-        exec devtunnel user login -g -d "$@"
+        login_command login github "$@"
         ;;
     logout)
         shift
@@ -173,6 +277,10 @@ case "${1:-help}" in
     status)
         shift
         exec devtunnel user show "$@"
+        ;;
+    auth-check)
+        shift
+        auth_check_command "$@"
         ;;
     host)
         host_command "$@"
