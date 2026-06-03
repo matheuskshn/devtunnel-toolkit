@@ -7,6 +7,12 @@ services:
       context: .
       dockerfile: Dockerfile
     network_mode: host
+    dns:
+      - "${DEVTUNNEL_DNS_PRIMARY:-1.1.1.1}"
+      - "${DEVTUNNEL_DNS_SECONDARY:-8.8.8.8}"
+      - "${DEVTUNNEL_DNS_FALLBACK:-127.0.0.1}"
+    extra_hosts:
+      - "localhost:127.0.0.1"
     restart: unless-stopped
     depends_on:
       squid:

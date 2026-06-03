@@ -279,6 +279,17 @@ That means the OpenVPN client connects to the local forwarded port created by
 | `EXPIRATION` | empty | Optional tunnel expiration, such as `2h` or `7d` |
 | `VERBOSE` | `false` | Adds `--verbose` when true |
 | `LOGIN_PROVIDER` | `microsoft` | Provider used by bare `login` |
+| `DEVTUNNEL_DNS_PRIMARY` | `1.1.1.1` | First DNS server used by the DevTunnel container |
+| `DEVTUNNEL_DNS_SECONDARY` | `8.8.8.8` | Second DNS server used by the DevTunnel container |
+| `DEVTUNNEL_DNS_FALLBACK` | `127.0.0.1` | Fallback to the host resolver when external DNS is unavailable |
+
+The DevTunnel container uses external DNS by default because some local
+resolvers do not resolve Microsoft Dev Tunnels service domains. To disable the
+external DNS override and use only the system resolver, set:
+
+```bash
+COMPOSE_FILE=compose.yml:compose.system-dns.yml
+```
 
 ### Squid
 
