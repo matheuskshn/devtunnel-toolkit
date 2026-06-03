@@ -291,6 +291,22 @@ external DNS override and use only the system resolver, set:
 COMPOSE_FILE=compose.yml:compose.system-dns.yml
 ```
 
+### CA certificates
+
+The host CA bundle is mounted read-only into the DevTunnel, Squid, and OpenVPN
+containers so internal TLS endpoints can use locally trusted corporate CAs.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `LOCAL_CA_BUNDLE` | `/etc/ssl/certs/ca-certificates.crt` | Host CA bundle path; common on Debian/Ubuntu hosts |
+| `CONTAINER_CA_BUNDLE` | `/etc/ssl/certs/ca-certificates.crt` | CA bundle path inside the Debian-based toolkit images |
+
+On RHEL, Rocky, Fedora, and similar hosts, set:
+
+```bash
+LOCAL_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt
+```
+
 ### Squid
 
 | Variable | Default | Description |
