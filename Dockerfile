@@ -15,6 +15,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        dbus-x11 \
+        gnome-keyring \
         libicu72 \
         libsecret-1-0 \
         tini \

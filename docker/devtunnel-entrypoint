@@ -36,6 +36,37 @@ Examples:
 EOF
 }
 
+start_secret_service() {
+    local keyring_env
+    local runtime_dir
+
+    if ! command -v dbus-launch >/dev/null || ! command -v gnome-keyring-daemon >/dev/null; then
+        return
+    fi
+
+    runtime_dir="${XDG_RUNTIME_DIR:-/tmp/devtunnel-runtime}"
+    mkdir -p "$runtime_dir"
+    chmod 700 "$runtime_dir"
+    export XDG_RUNTIME_DIR="$runtime_dir"
+
+    if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+        keyring_env="$(dbus-launch --sh-syntax 2>/dev/null || true)"
+        if [[ -n "$keyring_env" ]]; then
+            eval "$keyring_env"
+        fi
+    fi
+
+    keyring_env="$(printf '\n' | gnome-keyring-daemon --unlock 2>/dev/null || true)"
+    if [[ -n "$keyring_env" ]]; then
+        eval "$keyring_env"
+    fi
+
+    keyring_env="$(gnome-keyring-daemon --start --components=secrets 2>/dev/null || true)"
+    if [[ -n "$keyring_env" ]]; then
+        eval "$keyring_env"
+    fi
+}
+
 is_true() {
     case "${1:-}" in
         1|true|TRUE|yes|YES|on|ON) return 0 ;;
@@ -71,6 +102,16 @@ has_help_argument() {
         esac
     done
     return 1
+}
+
+devtunnel_auth_args() {
+    local access_token
+    access_token="$(access_token_value)"
+
+    if [[ -n "$access_token" ]]; then
+        printf '%s\n' "--access-token"
+        printf '%s\n' "$access_token"
+    fi
 }
 
 access_token_value() {
@@ -125,6 +166,67 @@ auth_check_command() {
     cached_login_check_command
 }
 
+ensure_tunnel() {
+    local auth_args=()
+    local create_args=()
+    local line
+
+    [[ -n "${TUNNEL_ID:-}" ]] || return 0
+
+    while IFS= read -r line; do
+        auth_args+=("$line")
+    done < <(devtunnel_auth_args)
+
+    if devtunnel show "$TUNNEL_ID" "${auth_args[@]}" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    create_args=("create" "$TUNNEL_ID")
+
+    if [[ -n "${EXPIRATION:-}" ]]; then
+        create_args+=("--expiration" "$EXPIRATION")
+    fi
+
+    if is_true "${ALLOW_ANONYMOUS:-false}" || is_true "${ANONYMOUS:-false}"; then
+        create_args+=("--allow-anonymous")
+    fi
+
+    if is_true "${VERBOSE:-false}"; then
+        create_args+=("--verbose")
+    fi
+
+    devtunnel "${create_args[@]}" "${auth_args[@]}"
+}
+
+ensure_tunnel_port() {
+    local port="$1"
+    local auth_args=()
+    local create_args=()
+    local line
+
+    [[ -n "${TUNNEL_ID:-}" ]] || return 0
+
+    while IFS= read -r line; do
+        auth_args+=("$line")
+    done < <(devtunnel_auth_args)
+
+    if devtunnel port show "$TUNNEL_ID" -p "$port" "${auth_args[@]}" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    create_args=("port" "create" "$TUNNEL_ID" "-p" "$port")
+
+    if [[ -n "${PROTOCOL:-}" ]]; then
+        create_args+=("--protocol" "$PROTOCOL")
+    fi
+
+    if is_true "${VERBOSE:-false}"; then
+        create_args+=("--verbose")
+    fi
+
+    devtunnel "${create_args[@]}" "${auth_args[@]}"
+}
+
 host_command() {
     shift
 
@@ -143,13 +245,18 @@ host_command() {
     fi
 
     if [[ -n "${TUNNEL_ID:-}" ]]; then
+        ensure_tunnel
         args+=("${TUNNEL_ID}")
     fi
 
     if ! has_port_argument "$@"; then
         ports="${ports//,/ }"
         for port in $ports; do
-            args+=("-p" "$port")
+            if [[ -n "${TUNNEL_ID:-}" ]]; then
+                ensure_tunnel_port "$port"
+            else
+                args+=("-p" "$port")
+            fi
         done
     fi
 
@@ -254,6 +361,8 @@ login_command() {
     echo "Checking cached login..."
     cached_login_check_command
 }
+
+start_secret_service
 
 case "${1:-help}" in
     ""|help|--help|-h)

@@ -7,11 +7,12 @@ services:
       context: .
       dockerfile: Dockerfile
     network_mode: host
-    stdin_open: true
-    tty: true
+    restart: unless-stopped
     depends_on:
-      - squid
-      - openvpn
+      squid:
+        condition: service_healthy
+      openvpn:
+        condition: service_healthy
     volumes:
       - devtunnel-home:/home/devtunnel
     environment:
@@ -38,6 +39,12 @@ services:
       SQUID_SSL_PORTS: "${SQUID_SSL_PORTS:-443 563 22}"
       SQUID_SAFE_PORTS: "${SQUID_SAFE_PORTS:-80 21 22 443 70 210 1025-65535 280 488 591 777}"
       SQUID_EXTRA_CONFIG: "${SQUID_EXTRA_CONFIG:-}"
+    healthcheck:
+      test: ["CMD-SHELL", "squid -k check -f /tmp/squid.conf >/dev/null 2>&1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
 
   openvpn:
@@ -67,6 +74,12 @@ services:
       OVPN_DNS: "${OVPN_DNS:-}"
       OVPN_REDIRECT_GATEWAY: "${OVPN_REDIRECT_GATEWAY:-false}"
       OVPN_EXTRA_CONFIG: "${OVPN_EXTRA_CONFIG:-}"
+    healthcheck:
+      test: ["CMD-SHELL", "ip addr show tun0 >/dev/null 2>&1 && ss -ltn | grep -q \"127.0.0.1:$${OVPN_PORT}\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
 
 volumes:
