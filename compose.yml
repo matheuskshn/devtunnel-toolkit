@@ -38,6 +38,38 @@ services:
       LOGIN_PROVIDER: "${LOGIN_PROVIDER:-microsoft}"
     command: ["host"]
 
+  devtunnel-renew:
+    image: ${DEVTUNNEL_IMAGE:-devtunnel-toolkit:local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    network_mode: host
+    dns:
+      - "${DEVTUNNEL_DNS_PRIMARY:-1.1.1.1}"
+      - "${DEVTUNNEL_DNS_SECONDARY:-8.8.8.8}"
+      - "${DEVTUNNEL_DNS_FALLBACK:-127.0.0.1}"
+    extra_hosts:
+      - "localhost:127.0.0.1"
+    restart: unless-stopped
+    volumes:
+      - devtunnel-home:/home/devtunnel
+      - type: bind
+        source: "${LOCAL_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+        target: "${CONTAINER_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      TUNNEL_ID: "${TUNNEL_ID:-}"
+      DEVTUNNEL_ACCESS_TOKEN: "${DEVTUNNEL_ACCESS_TOKEN:-}"
+      DEVTUNNEL_RENEW_AFTER_EXPIRATION_SECONDS: "${DEVTUNNEL_RENEW_AFTER_EXPIRATION_SECONDS:-60}"
+      DEVTUNNEL_RENEW_FALLBACK_INTERVAL_SECONDS: "${DEVTUNNEL_RENEW_FALLBACK_INTERVAL_SECONDS:-29700}"
+      DEVTUNNEL_RENEW_RETRY_SECONDS: "${DEVTUNNEL_RENEW_RETRY_SECONDS:-300}"
+      DEVTUNNEL_RENEW_MIN_SLEEP_SECONDS: "${DEVTUNNEL_RENEW_MIN_SLEEP_SECONDS:-30}"
+      VERBOSE: "${VERBOSE:-false}"
+      LOGIN_PROVIDER: "${LOGIN_PROVIDER:-microsoft}"
+    command: ["renew"]
+
   squid:
     image: ${SQUID_IMAGE:-devtunnel-toolkit-squid:local}
     build:

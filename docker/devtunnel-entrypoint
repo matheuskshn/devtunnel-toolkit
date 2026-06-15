@@ -13,12 +13,17 @@ Usage:
   status                        Show current login status
   auth-check                    Verify cached login or access-token auth
   host [devtunnel args...]      Host a tunnel using PORTS/TUNNEL_ID env defaults
+  renew [TUNNEL_ID] [--once]    Refresh cached auth after GitHub token expiry
   connect [TUNNEL_ID] [args...] Connect to a tunnel
   raw <devtunnel args...>       Run the devtunnel CLI directly
 
 Environment:
   LOGIN_PROVIDER=microsoft|github Provider used by bare "login"
   DEVTUNNEL_ACCESS_TOKEN        Token passed to host/connect as --access-token
+  DEVTUNNEL_RENEW_AFTER_EXPIRATION_SECONDS=60 Seconds after GitHub access-token expiry to refresh
+  DEVTUNNEL_RENEW_FALLBACK_INTERVAL_SECONDS=29700 Fallback renew interval when expiration cannot be read
+  DEVTUNNEL_RENEW_RETRY_SECONDS=300 Delay before retrying a failed renew check
+  DEVTUNNEL_RENEW_MIN_SLEEP_SECONDS=30 Minimum sleep when the next renew time is very close
   PORTS=3140,53194              Local ports to expose when -p/--port is omitted
   TUNNEL_ID=my-tunnel           Existing tunnel id to host/connect
   ALLOW_ANONYMOUS=true          Add --allow-anonymous
@@ -31,6 +36,8 @@ Examples:
   login github
   host
   PORTS=3140,53194 ALLOW_ANONYMOUS=true host
+  renew my-tunnel
+  renew my-tunnel --once
   connect my-tunnel
   raw user show
 EOF
@@ -304,6 +311,133 @@ connect_command() {
     exec devtunnel "${args[@]}" "$@"
 }
 
+github_token_expiration_epoch() {
+    local token_file="${XDG_DATA_HOME:-$HOME/.local/share}/DevTunnels/devtunnels-tokens-github"
+    local ticks
+
+    [[ -s "$token_file" ]] || return 1
+
+    ticks="$(grep -o '"expiration":[0-9]*' "$token_file" | head -n 1 | cut -d: -f2 || true)"
+    [[ "$ticks" =~ ^[0-9]+$ ]] || return 1
+
+    # GitHub token timestamps are stored by the CLI as Windows FILETIME ticks.
+    printf '%s\n' "$((ticks / 10000000 - 11644473600))"
+}
+
+format_epoch_utc() {
+    date -u -d "@$1" '+%Y-%m-%dT%H:%M:%SZ'
+}
+
+renew_sleep_seconds() {
+    local expiration_epoch
+    local target_epoch
+    local now_epoch
+    local wait_seconds
+    local grace_seconds="${DEVTUNNEL_RENEW_AFTER_EXPIRATION_SECONDS:-60}"
+    local fallback_seconds="${DEVTUNNEL_RENEW_FALLBACK_INTERVAL_SECONDS:-29700}"
+    local min_sleep_seconds="${DEVTUNNEL_RENEW_MIN_SLEEP_SECONDS:-30}"
+
+    if ! expiration_epoch="$(github_token_expiration_epoch)"; then
+        printf '%s\n' "$fallback_seconds"
+        return
+    fi
+
+    now_epoch="$(date +%s)"
+    target_epoch="$((expiration_epoch + grace_seconds))"
+
+    if (( target_epoch <= now_epoch )); then
+        printf '0\n'
+        return
+    fi
+
+    wait_seconds="$((target_epoch - now_epoch))"
+    if (( wait_seconds < min_sleep_seconds )); then
+        wait_seconds="$min_sleep_seconds"
+    fi
+
+    printf '%s\n' "$wait_seconds"
+}
+
+run_renew_probe() {
+    local tunnel_id="$1"
+    local auth_args=()
+    local line
+
+    while IFS= read -r line; do
+        auth_args+=("$line")
+    done < <(devtunnel_auth_args)
+
+    if [[ -n "$tunnel_id" ]]; then
+        devtunnel show "$tunnel_id" "${auth_args[@]}" >/dev/null
+    else
+        devtunnel list "${auth_args[@]}" >/dev/null
+    fi
+}
+
+renew_command() {
+    shift
+
+    local once="false"
+    local retry_seconds="${DEVTUNNEL_RENEW_RETRY_SECONDS:-300}"
+    local sleep_seconds
+    local expiration_epoch
+    local tunnel_id="${TUNNEL_ID:-}"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --once)
+                once="true"
+                ;;
+            -*)
+                echo "Unsupported renew option: $1" >&2
+                return 2
+                ;;
+            *)
+                tunnel_id="$1"
+                ;;
+        esac
+        shift
+    done
+
+    if [[ -n "$(access_token_value)" ]]; then
+        echo "DEVTUNNEL_ACCESS_TOKEN is set; cached-login renew is not needed."
+        if is_true "$once"; then
+            return 0
+        fi
+
+        while true; do
+            sleep "${DEVTUNNEL_RENEW_FALLBACK_INTERVAL_SECONDS:-29700}"
+        done
+    fi
+
+    if is_true "$once"; then
+        run_renew_probe "$tunnel_id"
+        return 0
+    fi
+
+    while true; do
+        if expiration_epoch="$(github_token_expiration_epoch)"; then
+            echo "Cached GitHub access token expires at $(format_epoch_utc "$expiration_epoch")."
+        else
+            echo "Could not read cached GitHub access-token expiration; using fallback interval."
+        fi
+
+        sleep_seconds="$(renew_sleep_seconds)"
+        if (( sleep_seconds > 0 )); then
+            echo "Next DevTunnel auth renew check in ${sleep_seconds}s."
+            sleep "$sleep_seconds"
+        fi
+
+        echo "Running DevTunnel auth renew check."
+        if run_renew_probe "$tunnel_id"; then
+            echo "DevTunnel auth renew check succeeded."
+        else
+            echo "DevTunnel auth renew check failed; retrying in ${retry_seconds}s." >&2
+            sleep "$retry_seconds"
+        fi
+    done
+}
+
 login_command() {
     shift
 
@@ -393,6 +527,9 @@ case "${1:-help}" in
         ;;
     host)
         host_command "$@"
+        ;;
+    renew)
+        renew_command "$@"
         ;;
     connect)
         connect_command "$@"

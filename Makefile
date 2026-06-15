@@ -7,7 +7,7 @@ TTY ?= $(shell [ -t 0 ] || printf '%s' '-T')
 
 RUN_DEVTUNNEL = PORTS="$(PORTS)" docker compose run --rm $(TTY) --no-deps devtunnel
 
-.PHONY: build login login-microsoft login-github logout status auth-check host connect up up-d down reset recreate logs proxy vpn ovpn-client shell help
+.PHONY: build login login-microsoft login-github logout status auth-check renew host connect up up-d down reset recreate logs proxy vpn ovpn-client shell help
 
 build:
 	@docker compose build
@@ -29,6 +29,9 @@ status:
 
 auth-check: build
 	@$(RUN_DEVTUNNEL) auth-check
+
+renew: build auth-check
+	@$(RUN_DEVTUNNEL) renew $(TUNNEL_ID) --once
 
 host: up
 
@@ -53,10 +56,10 @@ logs:
 	@docker compose logs -f
 
 proxy: build auth-check
-	@docker compose up squid devtunnel
+	@docker compose up squid devtunnel devtunnel-renew
 
 vpn: build auth-check
-	@docker compose up openvpn devtunnel
+	@docker compose up openvpn devtunnel devtunnel-renew
 
 ovpn-client: build
 	@docker compose run --rm $(TTY) openvpn client

@@ -197,6 +197,20 @@ make status
 make up
 ```
 
+`docker compose up` also starts `devtunnel-renew`, a lightweight sidecar that
+shares the DevTunnel home volume. For GitHub logins, it reads the cached access
+token expiration and runs a DevTunnel management check shortly after expiration
+so the CLI can refresh and rotate the cached GitHub token pair before an idle
+host has to reconnect with old credentials. It does not make credentials
+permanent; if GitHub or Microsoft revoke a token, or if the refresh token
+expires, run the login flow again.
+
+Run one renew probe manually with:
+
+```bash
+make renew
+```
+
 For unattended runs, provide an access token instead of a cached interactive
 login:
 
@@ -279,6 +293,10 @@ That means the OpenVPN client connects to the local forwarded port created by
 | `EXPIRATION` | empty | Optional tunnel expiration, such as `2h` or `7d` |
 | `VERBOSE` | `false` | Adds `--verbose` when true |
 | `LOGIN_PROVIDER` | `microsoft` | Provider used by bare `login` |
+| `DEVTUNNEL_RENEW_AFTER_EXPIRATION_SECONDS` | `60` | Seconds after cached GitHub access-token expiration before `devtunnel-renew` probes the tunnel |
+| `DEVTUNNEL_RENEW_FALLBACK_INTERVAL_SECONDS` | `29700` | Fallback renew interval when GitHub token expiration cannot be read |
+| `DEVTUNNEL_RENEW_RETRY_SECONDS` | `300` | Retry delay after a failed renew probe |
+| `DEVTUNNEL_RENEW_MIN_SLEEP_SECONDS` | `30` | Minimum sleep when the next renew time is very close |
 | `DEVTUNNEL_DNS_PRIMARY` | `1.1.1.1` | First DNS server used by the DevTunnel container |
 | `DEVTUNNEL_DNS_SECONDARY` | `8.8.8.8` | Second DNS server used by the DevTunnel container |
 | `DEVTUNNEL_DNS_FALLBACK` | `127.0.0.1` | Fallback to the host resolver when external DNS is unavailable |
