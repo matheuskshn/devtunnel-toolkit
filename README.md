@@ -205,6 +205,11 @@ host has to reconnect with old credentials. It does not make credentials
 permanent; if GitHub or Microsoft revoke a token, or if the refresh token
 expires, run the login flow again.
 
+The host container also watches the `devtunnel host` output for Unauthorized
+session-refresh errors. When that happens, it exits with a non-zero code so
+Docker's `restart: unless-stopped` policy creates a fresh host session using
+the current token cache.
+
 Run one renew probe manually with:
 
 ```bash
@@ -293,6 +298,9 @@ That means the OpenVPN client connects to the local forwarded port created by
 | `EXPIRATION` | empty | Optional tunnel expiration, such as `2h` or `7d` |
 | `VERBOSE` | `false` | Adds `--verbose` when true |
 | `LOGIN_PROVIDER` | `microsoft` | Provider used by bare `login` |
+| `DEVTUNNEL_EXIT_ON_UNAUTHORIZED` | `true` | Exit the host container when DevTunnel reports an Unauthorized host-session refresh |
+| `DEVTUNNEL_UNAUTHORIZED_EXIT_CODE` | `75` | Exit code used when the Unauthorized host-session guard trips |
+| `DEVTUNNEL_EXIT_TERMINATION_GRACE_SECONDS` | `10` | Seconds to wait before force-killing a stuck host process after the guard trips |
 | `DEVTUNNEL_RENEW_AFTER_EXPIRATION_SECONDS` | `60` | Seconds after cached GitHub access-token expiration before `devtunnel-renew` probes the tunnel |
 | `DEVTUNNEL_RENEW_FALLBACK_INTERVAL_SECONDS` | `29700` | Fallback renew interval when GitHub token expiration cannot be read |
 | `DEVTUNNEL_RENEW_RETRY_SECONDS` | `300` | Retry delay after a failed renew probe |

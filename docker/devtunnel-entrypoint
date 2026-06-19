@@ -20,6 +20,9 @@ Usage:
 Environment:
   LOGIN_PROVIDER=microsoft|github Provider used by bare "login"
   DEVTUNNEL_ACCESS_TOKEN        Token passed to host/connect as --access-token
+  DEVTUNNEL_EXIT_ON_UNAUTHORIZED=true Exit host process when DevTunnel reports Unauthorized
+  DEVTUNNEL_UNAUTHORIZED_EXIT_CODE=75 Exit code used when Unauthorized is detected
+  DEVTUNNEL_EXIT_TERMINATION_GRACE_SECONDS=10 Seconds to wait before force-killing host process
   DEVTUNNEL_RENEW_AFTER_EXPIRATION_SECONDS=60 Seconds after GitHub access-token expiry to refresh
   DEVTUNNEL_RENEW_FALLBACK_INTERVAL_SECONDS=29700 Fallback renew interval when expiration cannot be read
   DEVTUNNEL_RENEW_RETRY_SECONDS=300 Delay before retrying a failed renew check
@@ -234,6 +237,124 @@ ensure_tunnel_port() {
     devtunnel "${create_args[@]}" "${auth_args[@]}"
 }
 
+host_output_is_unauthorized() {
+    case "$1" in
+        *"Error connecting host tunnel session: Not authorized"*|\
+        *"Not authorizedUnauthorized"*|\
+        *"Refreshed tunnel access token is not valid"*|\
+        *"Tunnel service response status code: Unauthorized"*|\
+        *"GitHub token refresh failed."*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+monitor_host_output() {
+    local log_pipe="$1"
+    local sentinel_file="$2"
+    local line
+
+    while IFS= read -r line; do
+        printf '%s\n' "$line"
+        if host_output_is_unauthorized "$line"; then
+            : > "$sentinel_file"
+        fi
+    done < "$log_pipe"
+}
+
+watch_host_unauthorized() {
+    local sentinel_file="$1"
+    local child_pid="$2"
+    local grace_seconds="${DEVTUNNEL_EXIT_TERMINATION_GRACE_SECONDS:-10}"
+    local waited=0
+
+    while kill -0 "$child_pid" 2>/dev/null; do
+        if [[ -e "$sentinel_file" ]]; then
+            echo "Detected DevTunnel Unauthorized host error; stopping host process for container restart." >&2
+            signal_host_child TERM "$child_pid"
+
+            while kill -0 "$child_pid" 2>/dev/null && (( waited < grace_seconds )); do
+                sleep 1
+                waited="$((waited + 1))"
+            done
+
+            if kill -0 "$child_pid" 2>/dev/null; then
+                signal_host_child KILL "$child_pid"
+            fi
+
+            return 0
+        fi
+
+        sleep 1
+    done
+}
+
+signal_host_child() {
+    local signal="$1"
+    local child_pid="$2"
+
+    kill "-$signal" -- "-$child_pid" 2>/dev/null || kill "-$signal" "$child_pid" 2>/dev/null || true
+}
+
+run_host_process() {
+    if ! is_true "${DEVTUNNEL_EXIT_ON_UNAUTHORIZED:-true}"; then
+        exec "$@"
+    fi
+
+    local runtime_dir="${XDG_RUNTIME_DIR:-/tmp/devtunnel-runtime}"
+    local work_dir
+    local log_pipe
+    local sentinel_file
+    local child_pid
+    local monitor_pid
+    local watcher_pid
+    local exit_code
+
+    mkdir -p "$runtime_dir"
+    chmod 700 "$runtime_dir"
+    work_dir="$(mktemp -d "$runtime_dir/devtunnel-host.XXXXXX")"
+    log_pipe="$work_dir/output.pipe"
+    sentinel_file="$work_dir/unauthorized"
+    mkfifo "$log_pipe"
+
+    monitor_host_output "$log_pipe" "$sentinel_file" &
+    monitor_pid="$!"
+
+    if command -v setsid >/dev/null; then
+        setsid "$@" > "$log_pipe" 2>&1 &
+    else
+        "$@" > "$log_pipe" 2>&1 &
+    fi
+    child_pid="$!"
+
+    watch_host_unauthorized "$sentinel_file" "$child_pid" &
+    watcher_pid="$!"
+
+    trap 'signal_host_child TERM "$child_pid"; kill "$monitor_pid" "$watcher_pid" 2>/dev/null || true; rm -rf "$work_dir"; wait "$child_pid" 2>/dev/null || true; exit 143' TERM INT
+
+    set +e
+    wait "$child_pid"
+    exit_code="$?"
+    wait "$monitor_pid" 2>/dev/null
+    kill "$watcher_pid" 2>/dev/null
+    wait "$watcher_pid" 2>/dev/null
+    set -e
+
+    trap - TERM INT
+
+    if [[ -e "$sentinel_file" ]]; then
+        echo "Exiting after DevTunnel Unauthorized host error to let Docker restart the service." >&2
+        rm -rf "$work_dir"
+        return "${DEVTUNNEL_UNAUTHORIZED_EXIT_CODE:-75}"
+    fi
+
+    rm -rf "$work_dir"
+    return "$exit_code"
+}
+
 host_command() {
     shift
 
@@ -283,7 +404,7 @@ host_command() {
         args+=("--verbose")
     fi
 
-    exec devtunnel "${args[@]}" "$@"
+    run_host_process devtunnel "${args[@]}" "$@"
 }
 
 connect_command() {
