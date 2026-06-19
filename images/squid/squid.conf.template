@@ -1,5 +1,5 @@
 # Managed by DevTunnel Toolkit.
-# Based on the rhel_squid_proxy_install Ansible role defaults.
+# Defaults are intended for local-only proxy access through Dev Tunnels.
 
 http_port {{SQUID_HTTP_PORT}}
 visible_hostname {{SQUID_VISIBLE_HOSTNAME}}

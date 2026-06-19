@@ -24,9 +24,6 @@ two common development workflows:
 - Use a proxy through the tunnel to reach internal HTTP/HTTPS/SSH-over-CONNECT endpoints.
 - Use a VPN through the tunnel to route development traffic to the network where the tunnel host is running.
 
-The default proxy port is `3140`, matching the Squid configuration used by the
-`rhel_squid_proxy_install` Ansible role.
-
 ## Quickstart
 
 Login once:
@@ -257,7 +254,7 @@ export no_proxy=localhost,127.0.0.1
 
 Then use internal HTTP/HTTPS endpoints normally.
 
-The Squid defaults are based on the Ansible role:
+The Squid service uses these defaults:
 
 | Setting | Default |
 | --- | --- |
