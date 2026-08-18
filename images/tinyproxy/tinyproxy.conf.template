@@ -1,0 +1,18 @@
+# Managed by DevTunnel Toolkit.
+# This proxy is a local route selector. It does not terminate or inspect TLS.
+
+User tinyproxy
+Group tinyproxy
+
+Port {{ROUTE_PROXY_PORT}}
+Listen {{ROUTE_PROXY_LISTEN_ADDRESS}}
+Timeout 600
+MaxClients 100
+
+PidFile "/run/tinyproxy/tinyproxy.pid"
+LogLevel Warning
+ViaProxyName "devtunnel-toolkit-route-proxy"
+
+# The container uses host networking and must remain reachable only from the
+# local machine. Destination selection is added by the entrypoint.
+Allow {{ROUTE_PROXY_LISTEN_ADDRESS}}

@@ -8,13 +8,14 @@
 Developer-focused toolkit that extends Microsoft Dev Tunnels with local network
 access helpers.
 
-It packages three services:
+It packages three server-side services and one optional client-side helper:
 
 | Service | Image | Purpose |
 | --- | --- | --- |
 | DevTunnel | `devtunnel-toolkit` | Hosts or connects Microsoft Dev Tunnels |
 | Squid | `devtunnel-toolkit-squid` | HTTP/HTTPS proxy for local network access |
 | OpenVPN | `devtunnel-toolkit-openvpn` | Privileged TCP VPN server for routed local network access |
+| Route proxy | `devtunnel-toolkit-route-proxy` | Selectively sends configured destinations through a locally connected tunnel proxy |
 
 ## Why
 
@@ -23,6 +24,8 @@ two common development workflows:
 
 - Use a proxy through the tunnel to reach internal HTTP/HTTPS/SSH-over-CONNECT endpoints.
 - Use a VPN through the tunnel to route development traffic to the network where the tunnel host is running.
+- Optionally keep normal client traffic direct while routing only selected
+  destinations through the tunneled proxy.
 
 ## Quickstart
 
@@ -254,6 +257,93 @@ export no_proxy=localhost,127.0.0.1
 
 Then use internal HTTP/HTTPS endpoints normally.
 
+This process-wide configuration sends every HTTP/HTTPS request made by the
+configured application to the tunneled Squid proxy. If an application should
+use the tunnel for only a small set of destinations, use the optional selective
+local proxy below.
+
+### Selective local proxy
+
+The route proxy is a client-side complement to the server-side Squid proxy; it
+does not replace Squid. Start it on the machine where `devtunnel connect` has
+already made the remote Squid port available as `127.0.0.1:3140`.
+
+The route proxy listens on `127.0.0.1:8888`. Requests for configured destination
+hostnames use the local DevTunnel endpoint as an upstream HTTP proxy. Requests
+for all other destinations are connected directly from the client machine.
+
+```text
+application
+  -> route proxy at 127.0.0.1:8888
+       -> configured destinations: DevTunnel/Squid at 127.0.0.1:3140
+       -> all other destinations: direct connection
+```
+
+Set one or more comma-separated destination hostnames. Use reserved example
+names in shared documentation; keep actual internal hostnames in an untracked
+local environment file.
+
+For a quick one-off start, provide the destinations directly through
+`ROUTE_PROXY_HOSTS`:
+
+```bash
+ROUTE_PROXY_HOSTS=api.internal.example.test,.services.internal.example.test \
+  make route-proxy-up
+```
+
+Multiple destinations are separated by commas. An inline value takes precedence
+over the optional local environment file described below.
+
+For repeatable local use, copy the dedicated public template:
+
+```bash
+cp .env.route-proxy.example .env.route-proxy
+```
+
+Edit only `.env.route-proxy` with the real local destinations and upstream
+address. The generated file is ignored by Git. The route-proxy Make targets
+automatically load it when present:
+
+```bash
+make route-proxy-up
+make route-proxy-logs
+```
+
+Then scope the proxy environment to the application that needs it:
+
+```bash
+HTTP_PROXY=http://127.0.0.1:8888 \
+HTTPS_PROXY=http://127.0.0.1:8888 \
+NO_PROXY=localhost,127.0.0.1 \
+your-command
+```
+
+The equivalent Docker Compose command is:
+
+```bash
+docker compose \
+  --env-file .env.route-proxy \
+  -f compose.route-proxy.yml \
+  up -d --build
+```
+
+Stop the local helper without affecting the server-side Toolkit stack:
+
+```bash
+make route-proxy-down
+```
+
+A hostname such as `api.internal.example.test` matches only that exact host. A
+leading dot, such as `.services.internal.example.test`, matches hosts in that
+domain according to Tinyproxy's upstream matching rules. The route list is a
+routing decision, not an authorization boundary; the remote Squid and target
+network remain responsible for access control.
+
+The route proxy uses HTTP `CONNECT` for HTTPS and does not terminate, decrypt,
+or bypass TLS. Application traffic remains protected by the destination's TLS
+certificate validation. Its default log level records warnings and errors, not
+successful request URLs.
+
 The Squid service uses these defaults:
 
 | Setting | Default |
@@ -341,6 +431,29 @@ LOCAL_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt
 | `SQUID_SAFE_PORTS` | `80 21 22 443 70 210 1025-65535 280 488 591 777` | Safe destination ports |
 | `SQUID_EXTRA_CONFIG` | empty | Extra raw Squid configuration lines |
 
+### Selective route proxy
+
+The route proxy is intentionally defined in the separate
+`compose.route-proxy.yml` file because it runs on the client machine, after the
+DevTunnel connection is established. It is not started by the default
+server-side Compose stack.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `ROUTE_PROXY_ENV_FILE` | `.env.route-proxy` | Local file automatically loaded by the Make targets when it exists |
+| `ROUTE_PROXY_IMAGE` | `devtunnel-toolkit-route-proxy:local` | Route proxy image used by the client-side Compose file |
+| `ROUTE_PROXY_LISTEN_ADDRESS` | `127.0.0.1` | Local listener; only IPv4 or IPv6 loopback is accepted |
+| `ROUTE_PROXY_PORT` | `8888` | Local application-facing proxy port |
+| `ROUTE_PROXY_UPSTREAM_HOST` | `127.0.0.1` | Host where `devtunnel connect` exposes the remote proxy |
+| `ROUTE_PROXY_UPSTREAM_PORT` | `3140` | Port where `devtunnel connect` exposes the remote proxy |
+| `ROUTE_PROXY_HOSTS` | empty, required | Comma-separated exact hostnames or leading-dot domain patterns routed through the upstream proxy |
+| `ROUTE_PROXY_CONNECT_PORTS` | `443` | Space-separated destination ports allowed for HTTP `CONNECT` |
+
+The container fails closed when `ROUTE_PROXY_HOSTS` is empty or malformed. It
+also rejects non-loopback listener addresses so this local helper cannot be
+accidentally published on the network. Do not put URL schemes, paths, query
+strings, credentials, or ports in `ROUTE_PROXY_HOSTS`.
+
 ### OpenVPN
 
 | Variable | Default | Description |
@@ -364,6 +477,7 @@ LOCAL_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt
 ```bash
 docker pull ghcr.io/matheuskshn/devtunnel-toolkit:edge
 docker pull ghcr.io/matheuskshn/devtunnel-toolkit-squid:edge
+docker pull ghcr.io/matheuskshn/devtunnel-toolkit-route-proxy:edge
 docker pull ghcr.io/matheuskshn/devtunnel-toolkit-openvpn:edge
 ```
 
@@ -390,6 +504,13 @@ git push origin v1.0.0
 ## Security notes
 
 - Squid and OpenVPN are bound to `127.0.0.1` on the host; Dev Tunnels exposes those local ports.
+- The selective route proxy is bound to client loopback and must not be exposed
+  through Dev Tunnels or published on a non-loopback interface.
+- Destination lists can reveal internal naming conventions. Keep real values in
+  ignored local environment files and use reserved `.test` examples in commits,
+  issues, logs, and documentation.
+- The selective route list controls forwarding only. It is not a firewall or an
+  authorization policy.
 - `ALLOW_ANONYMOUS=true` can expose your proxy/VPN to anyone with the tunnel URL or connection details.
 - OpenVPN runs as a privileged container because it needs `/dev/net/tun`, IP forwarding, and NAT rules.
 - Treat generated `.ovpn` files, tunnel URLs, and access tokens as secrets.
@@ -401,6 +522,9 @@ git push origin v1.0.0
 make build
 make help
 docker compose config
+ROUTE_PROXY_HOSTS=api.internal.example.test \
+  docker compose -f compose.route-proxy.yml config
+make route-proxy-build
 ```
 
 ## References
@@ -408,4 +532,5 @@ docker compose config
 - Microsoft Dev Tunnels quickstart: https://learn.microsoft.com/azure/developer/dev-tunnels/get-started
 - Microsoft Dev Tunnels CLI reference: https://learn.microsoft.com/azure/developer/dev-tunnels/cli-commands
 - Squid project: https://www.squid-cache.org/
+- Tinyproxy project: https://tinyproxy.github.io/
 - OpenVPN project: https://openvpn.net/

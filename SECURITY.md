@@ -19,3 +19,7 @@ Dev Tunnels issue tracker.
 - Treat tunnel URLs and access tokens as secrets.
 - Avoid `ALLOW_ANONYMOUS=true` unless the exposed service is safe for public access.
 - Review what is listening on the exported port before starting a tunnel.
+- Keep selective route-proxy listeners on loopback and never expose their local
+  port through a Dev Tunnel.
+- Treat real route destination lists and upstream proxy addresses as local
+  configuration; do not publish private network topology in repository files.

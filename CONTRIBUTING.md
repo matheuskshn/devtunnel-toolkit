@@ -20,6 +20,16 @@ Validate the Docker Compose file:
 
 ```bash
 docker compose config
+docker compose \
+  --env-file .env.route-proxy.example \
+  -f compose.route-proxy.yml \
+  config
+```
+
+Build the optional client-side route proxy:
+
+```bash
+make route-proxy-build
 ```
 
 ## Pull requests
@@ -28,6 +38,9 @@ docker compose config
 - Update `README.md` when behavior or usage changes.
 - Run the relevant Docker build or wrapper checks before opening a PR.
 - Do not commit secrets, access tokens, or local tunnel credentials.
+- Do not commit real internal hostnames, proxy addresses, or private network
+  topology in route-proxy examples; use reserved `.test` names and local
+  ignored environment files.
 
 ## Releases
 

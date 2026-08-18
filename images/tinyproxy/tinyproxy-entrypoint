@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" != "tinyproxy" ]]; then
+    exec "$@"
+fi
+
+listen_address="${ROUTE_PROXY_LISTEN_ADDRESS:-127.0.0.1}"
+listen_port="${ROUTE_PROXY_PORT:-8888}"
+upstream_host="${ROUTE_PROXY_UPSTREAM_HOST:-127.0.0.1}"
+upstream_port="${ROUTE_PROXY_UPSTREAM_PORT:-3140}"
+route_hosts="${ROUTE_PROXY_HOSTS:-}"
+connect_ports="${ROUTE_PROXY_CONNECT_PORTS:-443}"
+
+fail() {
+    printf 'route-proxy: %s\n' "$1" >&2
+    exit 2
+}
+
+validate_port() {
+    local name="$1"
+    local value="$2"
+
+    if [[ ! "$value" =~ ^[0-9]+$ || "$value" -lt 1 || "$value" -gt 65535 ]]; then
+        fail "$name must be an integer between 1 and 65535"
+    fi
+}
+
+trim() {
+    local value="$1"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    printf '%s' "$value"
+}
+
+if [[ "$listen_address" != "127.0.0.1" && "$listen_address" != "::1" ]]; then
+    fail "ROUTE_PROXY_LISTEN_ADDRESS must be a loopback address (127.0.0.1 or ::1)"
+fi
+
+validate_port "ROUTE_PROXY_PORT" "$listen_port"
+validate_port "ROUTE_PROXY_UPSTREAM_PORT" "$upstream_port"
+
+if [[ ! "$upstream_host" =~ ^[A-Za-z0-9.-]+$ ]]; then
+    fail "ROUTE_PROXY_UPSTREAM_HOST must be a hostname or IPv4 address without a scheme or port"
+fi
+
+if [[ -z "$(trim "$route_hosts")" ]]; then
+    fail "ROUTE_PROXY_HOSTS is required and must contain at least one hostname"
+fi
+
+sed \
+    -e "s|{{ROUTE_PROXY_PORT}}|${listen_port}|g" \
+    -e "s|{{ROUTE_PROXY_LISTEN_ADDRESS}}|${listen_address}|g" \
+    /etc/tinyproxy/tinyproxy.conf.template > /tmp/tinyproxy.conf
+
+for connect_port in $connect_ports; do
+    validate_port "ROUTE_PROXY_CONNECT_PORTS entry" "$connect_port"
+    printf 'ConnectPort %s\n' "$connect_port" >> /tmp/tinyproxy.conf
+done
+
+IFS=',' read -r -a hosts <<< "$route_hosts"
+configured_hosts=0
+
+for raw_host in "${hosts[@]}"; do
+    host="$(trim "$raw_host")"
+
+    if [[ -z "$host" ]]; then
+        fail "ROUTE_PROXY_HOSTS contains an empty entry"
+    fi
+
+    if [[ "$host" == "." || ! "$host" =~ ^\.?[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*$ ]]; then
+        fail "invalid ROUTE_PROXY_HOSTS entry: $host"
+    fi
+
+    printf 'Upstream http %s:%s "%s"\n' \
+        "$upstream_host" \
+        "$upstream_port" \
+        "$host" >> /tmp/tinyproxy.conf
+    configured_hosts=$((configured_hosts + 1))
+done
+
+printf 'route-proxy: listening on %s:%s; routing %s destination pattern(s) through %s:%s\n' \
+    "$listen_address" \
+    "$listen_port" \
+    "$configured_hosts" \
+    "$upstream_host" \
+    "$upstream_port"
+
+exec tinyproxy -d -c /tmp/tinyproxy.conf

@@ -1,0 +1,17 @@
+name: devtunnel-toolkit-route-proxy
+
+services:
+  route-proxy:
+    image: ${ROUTE_PROXY_IMAGE:-devtunnel-toolkit-route-proxy:local}
+    build:
+      context: images/tinyproxy
+      dockerfile: Dockerfile
+    network_mode: host
+    environment:
+      ROUTE_PROXY_LISTEN_ADDRESS: "${ROUTE_PROXY_LISTEN_ADDRESS:-127.0.0.1}"
+      ROUTE_PROXY_PORT: "${ROUTE_PROXY_PORT:-8888}"
+      ROUTE_PROXY_UPSTREAM_HOST: "${ROUTE_PROXY_UPSTREAM_HOST:-127.0.0.1}"
+      ROUTE_PROXY_UPSTREAM_PORT: "${ROUTE_PROXY_UPSTREAM_PORT:-3140}"
+      ROUTE_PROXY_HOSTS: "${ROUTE_PROXY_HOSTS:-}"
+      ROUTE_PROXY_CONNECT_PORTS: "${ROUTE_PROXY_CONNECT_PORTS:-443}"
+    restart: unless-stopped

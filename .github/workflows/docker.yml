@@ -45,6 +45,11 @@ jobs:
             dockerfile: images/squid/Dockerfile
             context: images/squid
             description: Squid proxy for DevTunnel Toolkit
+          - title: Selective route proxy
+            image: devtunnel-toolkit-route-proxy
+            dockerfile: images/tinyproxy/Dockerfile
+            context: images/tinyproxy
+            description: Selective local route proxy for DevTunnel Toolkit clients
           - title: OpenVPN server
             image: devtunnel-toolkit-openvpn
             dockerfile: images/openvpn/Dockerfile
