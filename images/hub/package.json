@@ -3,7 +3,9 @@
   "version": "0.1.0-rc.1",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc",
     "test": "npm run build && node --test --test-timeout=30000 tests/*.test.mjs",
@@ -17,5 +19,9 @@
     "@microsoft/dev-tunnels-ssh": "3.12.42",
     "@microsoft/dev-tunnels-ssh-tcp": "3.12.42"
   },
-  "devDependencies": { "@types/node": "22.19.15", "typescript": "5.9.3", "yaml": "2.9.0" }
+  "devDependencies": {
+    "@types/node": "22.19.15",
+    "typescript": "5.9.3",
+    "yaml": "2.9.0"
+  }
 }
