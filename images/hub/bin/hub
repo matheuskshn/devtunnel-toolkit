@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+umask 077
+if [ "${1:-}" = serve ]; then
+  hub_data_dir="${HUB_DATA_DIR:-/data}"
+  hub_run_dir="${HUB_RUN_DIR:-/run/hub}"
+  mkdir -p "$hub_data_dir" "$hub_run_dir"
+  export HUB_LOCKED=1
+  # flock is released by the kernel, never by deleting a stale PID marker.
+  exec flock --no-fork --nonblock --conflict-exit-code 75 "$hub_data_dir/manager.lock" node /opt/hub/dist/cli.js "$@"
+fi
+exec node /opt/hub/dist/cli.js "$@"

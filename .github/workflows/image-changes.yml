@@ -1,0 +1,29 @@
+name: Select changed images
+on:
+  workflow_call:
+    outputs:
+      matrix:
+        value: ${{ jobs.changes.outputs.matrix }}
+      legacy:
+        value: ${{ jobs.changes.outputs.legacy }}
+      hub:
+        value: ${{ jobs.changes.outputs.hub }}
+permissions:
+  contents: read
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      legacy: ${{ steps.select.outputs.legacy }}
+      hub: ${{ steps.select.outputs.hub }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test .github/scripts/image-changes.test.mjs
+      - id: select
+        run: node .github/scripts/image-changes.mjs

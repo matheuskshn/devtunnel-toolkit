@@ -3,18 +3,18 @@
 [![Docker](https://github.com/matheuskshn/devtunnel-toolkit/actions/workflows/docker.yml/badge.svg)](https://github.com/matheuskshn/devtunnel-toolkit/actions/workflows/docker.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GHCR](https://img.shields.io/badge/GHCR-devtunnel--toolkit-24292f?logo=github)](https://github.com/matheuskshn/devtunnel-toolkit/pkgs/container/devtunnel-toolkit)
-[![Docker Hub](https://img.shields.io/badge/Docker%20Hub-devtunnel--toolkit-2496ed?logo=docker&logoColor=white)](https://hub.docker.com/r/matheuskshn/devtunnel-toolkit)
+[![Docker Hub](<https://img.shields.io/badge/Docker%20Hub-devtunnel--toolkit-2496ed?logo=docker&logoColor=white>)](https://hub.docker.com/r/matheuskshn/devtunnel-toolkit)
 
 Developer-focused toolkit that extends Microsoft Dev Tunnels with local network
 access helpers.
 
 It packages three server-side services and one optional client-side helper:
 
-| Service | Image | Purpose |
-| --- | --- | --- |
-| DevTunnel | `devtunnel-toolkit` | Hosts or connects Microsoft Dev Tunnels |
-| Squid | `devtunnel-toolkit-squid` | HTTP/HTTPS proxy for local network access |
-| OpenVPN | `devtunnel-toolkit-openvpn` | Privileged TCP VPN server for routed local network access |
+| Service     | Image                             | Purpose                                                                            |
+| ----------- | --------------------------------- | ---------------------------------------------------------------------------------- |
+| DevTunnel   | `devtunnel-toolkit`             | Hosts or connects Microsoft Dev Tunnels                                            |
+| Squid       | `devtunnel-toolkit-squid`       | HTTP/HTTPS proxy for local network access                                          |
+| OpenVPN     | `devtunnel-toolkit-openvpn`     | Privileged TCP VPN server for routed local network access                          |
 | Route proxy | `devtunnel-toolkit-route-proxy` | Selectively sends configured destinations through a locally connected tunnel proxy |
 
 ## Why
@@ -62,9 +62,9 @@ make up-d
 
 By default, the tunnel hosts:
 
-| Port | Service |
-| --- | --- |
-| `3140` | Squid proxy |
+| Port      | Service            |
+| --------- | ------------------ |
+| `3140`  | Squid proxy        |
 | `53194` | OpenVPN TCP server |
 
 Use a persistent tunnel ID when desired:
@@ -113,11 +113,11 @@ make up-d
 
 This starts:
 
-| Service | Local endpoint |
-| --- | --- |
-| Squid proxy | `127.0.0.1:3140` |
+| Service        | Local endpoint          |
+| -------------- | ----------------------- |
+| Squid proxy    | `127.0.0.1:3140`      |
 | OpenVPN server | `127.0.0.1:53194/tcp` |
-| DevTunnel host | ports `3140,53194` |
+| DevTunnel host | ports`3140,53194`     |
 
 Follow the tunnel logs:
 
@@ -346,12 +346,12 @@ successful request URLs.
 
 The Squid service uses these defaults:
 
-| Setting | Default |
-| --- | --- |
-| Listen address | `127.0.0.1` |
-| HTTP port | `3140` |
-| SSL ports | `443 563 22` |
-| Safe ports | `80 21 22 443 70 210 1025-65535 280 488 591 777` |
+| Setting        | Default                                            |
+| -------------- | -------------------------------------------------- |
+| Listen address | `127.0.0.1`                                      |
+| HTTP port      | `3140`                                           |
+| SSL ports      | `443 563 22`                                     |
+| Safe ports     | `80 21 22 443 70 210 1025-65535 280 488 591 777` |
 
 ### Use the VPN
 
@@ -375,26 +375,26 @@ That means the OpenVPN client connects to the local forwarded port created by
 
 ### DevTunnel
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `PORTS` | `3140,53194` | Comma-separated ports hosted by Dev Tunnels |
-| `TUNNEL_ID` | empty | Existing tunnel ID to host or connect |
-| `DEVTUNNEL_ACCESS_TOKEN` | empty | Optional token passed as `--access-token` to `host` and `connect` |
-| `ALLOW_ANONYMOUS` | `false` | Adds `--allow-anonymous` when true |
-| `PROTOCOL` | empty | Optional `http`, `https`, or `auto` |
-| `EXPIRATION` | empty | Optional tunnel expiration, such as `2h` or `7d` |
-| `VERBOSE` | `false` | Adds `--verbose` when true |
-| `LOGIN_PROVIDER` | `microsoft` | Provider used by bare `login` |
-| `DEVTUNNEL_EXIT_ON_UNAUTHORIZED` | `true` | Exit the host container when DevTunnel reports an Unauthorized host-session refresh |
-| `DEVTUNNEL_UNAUTHORIZED_EXIT_CODE` | `75` | Exit code used when the Unauthorized host-session guard trips |
-| `DEVTUNNEL_EXIT_TERMINATION_GRACE_SECONDS` | `10` | Seconds to wait before force-killing a stuck host process after the guard trips |
-| `DEVTUNNEL_RENEW_AFTER_EXPIRATION_SECONDS` | `60` | Seconds after cached GitHub access-token expiration before `devtunnel-renew` probes the tunnel |
-| `DEVTUNNEL_RENEW_FALLBACK_INTERVAL_SECONDS` | `29700` | Fallback renew interval when GitHub token expiration cannot be read |
-| `DEVTUNNEL_RENEW_RETRY_SECONDS` | `300` | Retry delay after a failed renew probe |
-| `DEVTUNNEL_RENEW_MIN_SLEEP_SECONDS` | `30` | Minimum sleep when the next renew time is very close |
-| `DEVTUNNEL_DNS_PRIMARY` | `1.1.1.1` | First DNS server used by the DevTunnel container |
-| `DEVTUNNEL_DNS_SECONDARY` | `8.8.8.8` | Second DNS server used by the DevTunnel container |
-| `DEVTUNNEL_DNS_FALLBACK` | `127.0.0.1` | Fallback to the host resolver when external DNS is unavailable |
+| Variable                                      | Default        | Description                                                                                     |
+| --------------------------------------------- | -------------- | ----------------------------------------------------------------------------------------------- |
+| `PORTS`                                     | `3140,53194` | Comma-separated ports hosted by Dev Tunnels                                                     |
+| `TUNNEL_ID`                                 | empty          | Existing tunnel ID to host or connect                                                           |
+| `DEVTUNNEL_ACCESS_TOKEN`                    | empty          | Optional token passed as`--access-token` to `host` and `connect`                          |
+| `ALLOW_ANONYMOUS`                           | `false`      | Adds`--allow-anonymous` when true                                                             |
+| `PROTOCOL`                                  | empty          | Optional`http`, `https`, or `auto`                                                        |
+| `EXPIRATION`                                | empty          | Optional tunnel expiration, such as`2h` or `7d`                                             |
+| `VERBOSE`                                   | `false`      | Adds`--verbose` when true                                                                     |
+| `LOGIN_PROVIDER`                            | `microsoft`  | Provider used by bare`login`                                                                  |
+| `DEVTUNNEL_EXIT_ON_UNAUTHORIZED`            | `true`       | Exit the host container when DevTunnel reports an Unauthorized host-session refresh             |
+| `DEVTUNNEL_UNAUTHORIZED_EXIT_CODE`          | `75`         | Exit code used when the Unauthorized host-session guard trips                                   |
+| `DEVTUNNEL_EXIT_TERMINATION_GRACE_SECONDS`  | `10`         | Seconds to wait before force-killing a stuck host process after the guard trips                 |
+| `DEVTUNNEL_RENEW_AFTER_EXPIRATION_SECONDS`  | `60`         | Seconds after cached GitHub access-token expiration before`devtunnel-renew` probes the tunnel |
+| `DEVTUNNEL_RENEW_FALLBACK_INTERVAL_SECONDS` | `29700`      | Fallback renew interval when GitHub token expiration cannot be read                             |
+| `DEVTUNNEL_RENEW_RETRY_SECONDS`             | `300`        | Retry delay after a failed renew probe                                                          |
+| `DEVTUNNEL_RENEW_MIN_SLEEP_SECONDS`         | `30`         | Minimum sleep when the next renew time is very close                                            |
+| `DEVTUNNEL_DNS_PRIMARY`                     | `1.1.1.1`    | First DNS server used by the DevTunnel container                                                |
+| `DEVTUNNEL_DNS_SECONDARY`                   | `8.8.8.8`    | Second DNS server used by the DevTunnel container                                               |
+| `DEVTUNNEL_DNS_FALLBACK`                    | `127.0.0.1`  | Fallback to the host resolver when external DNS is unavailable                                  |
 
 The DevTunnel container uses external DNS by default because some local
 resolvers do not resolve Microsoft Dev Tunnels service domains. To disable the
@@ -409,9 +409,9 @@ COMPOSE_FILE=compose.yml:compose.system-dns.yml
 The host CA bundle is mounted read-only into the DevTunnel, Squid, and OpenVPN
 containers so internal TLS endpoints can use locally trusted corporate CAs.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `LOCAL_CA_BUNDLE` | `/etc/ssl/certs/ca-certificates.crt` | Host CA bundle path; common on Debian/Ubuntu hosts |
+| Variable                | Default                                | Description                                           |
+| ----------------------- | -------------------------------------- | ----------------------------------------------------- |
+| `LOCAL_CA_BUNDLE`     | `/etc/ssl/certs/ca-certificates.crt` | Host CA bundle path; common on Debian/Ubuntu hosts    |
 | `CONTAINER_CA_BUNDLE` | `/etc/ssl/certs/ca-certificates.crt` | CA bundle path inside the Debian-based toolkit images |
 
 On RHEL, Rocky, Fedora, and similar hosts, set:
@@ -422,14 +422,14 @@ LOCAL_CA_BUNDLE=/etc/pki/tls/certs/ca-bundle.crt
 
 ### Squid
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `SQUID_HTTP_PORT` | `3140` | Squid listen port inside the container |
-| `SQUID_LISTEN_ADDRESS` | `127.0.0.1` | Squid listen address inside the container |
-| `SQUID_VISIBLE_HOSTNAME` | `devtunnel-toolkit-squid` | Squid visible hostname |
-| `SQUID_SSL_PORTS` | `443 563 22` | Ports allowed for CONNECT |
-| `SQUID_SAFE_PORTS` | `80 21 22 443 70 210 1025-65535 280 488 591 777` | Safe destination ports |
-| `SQUID_EXTRA_CONFIG` | empty | Extra raw Squid configuration lines |
+| Variable                   | Default                                            | Description                               |
+| -------------------------- | -------------------------------------------------- | ----------------------------------------- |
+| `SQUID_HTTP_PORT`        | `3140`                                           | Squid listen port inside the container    |
+| `SQUID_LISTEN_ADDRESS`   | `127.0.0.1`                                      | Squid listen address inside the container |
+| `SQUID_VISIBLE_HOSTNAME` | `devtunnel-toolkit-squid`                        | Squid visible hostname                    |
+| `SQUID_SSL_PORTS`        | `443 563 22`                                     | Ports allowed for CONNECT                 |
+| `SQUID_SAFE_PORTS`       | `80 21 22 443 70 210 1025-65535 280 488 591 777` | Safe destination ports                    |
+| `SQUID_EXTRA_CONFIG`     | empty                                              | Extra raw Squid configuration lines       |
 
 ### Selective route proxy
 
@@ -438,16 +438,16 @@ The route proxy is intentionally defined in the separate
 DevTunnel connection is established. It is not started by the default
 server-side Compose stack.
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `ROUTE_PROXY_ENV_FILE` | `.env.route-proxy` | Local file automatically loaded by the Make targets when it exists |
-| `ROUTE_PROXY_IMAGE` | `devtunnel-toolkit-route-proxy:local` | Route proxy image used by the client-side Compose file |
-| `ROUTE_PROXY_LISTEN_ADDRESS` | `127.0.0.1` | Local listener; only IPv4 or IPv6 loopback is accepted |
-| `ROUTE_PROXY_PORT` | `8888` | Local application-facing proxy port |
-| `ROUTE_PROXY_UPSTREAM_HOST` | `127.0.0.1` | Host where `devtunnel connect` exposes the remote proxy |
-| `ROUTE_PROXY_UPSTREAM_PORT` | `3140` | Port where `devtunnel connect` exposes the remote proxy |
-| `ROUTE_PROXY_HOSTS` | empty, required | Comma-separated exact hostnames or leading-dot domain patterns routed through the upstream proxy |
-| `ROUTE_PROXY_CONNECT_PORTS` | `443` | Space-separated destination ports allowed for HTTP `CONNECT` |
+| Variable                       | Default                                 | Description                                                                                      |
+| ------------------------------ | --------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `ROUTE_PROXY_ENV_FILE`       | `.env.route-proxy`                    | Local file automatically loaded by the Make targets when it exists                               |
+| `ROUTE_PROXY_IMAGE`          | `devtunnel-toolkit-route-proxy:local` | Route proxy image used by the client-side Compose file                                           |
+| `ROUTE_PROXY_LISTEN_ADDRESS` | `127.0.0.1`                           | Local listener; only IPv4 or IPv6 loopback is accepted                                           |
+| `ROUTE_PROXY_PORT`           | `8888`                                | Local application-facing proxy port                                                              |
+| `ROUTE_PROXY_UPSTREAM_HOST`  | `127.0.0.1`                           | Host where`devtunnel connect` exposes the remote proxy                                         |
+| `ROUTE_PROXY_UPSTREAM_PORT`  | `3140`                                | Port where`devtunnel connect` exposes the remote proxy                                         |
+| `ROUTE_PROXY_HOSTS`          | empty, required                         | Comma-separated exact hostnames or leading-dot domain patterns routed through the upstream proxy |
+| `ROUTE_PROXY_CONNECT_PORTS`  | `443`                                 | Space-separated destination ports allowed for HTTP`CONNECT`                                    |
 
 The container fails closed when `ROUTE_PROXY_HOSTS` is empty or malformed. It
 also rejects non-loopback listener addresses so this local helper cannot be
@@ -456,21 +456,21 @@ strings, credentials, or ports in `ROUTE_PROXY_HOSTS`.
 
 ### OpenVPN
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `OVPN_PORT` | `53194` | OpenVPN listen port inside the container |
-| `OVPN_LISTEN_ADDRESS` | `127.0.0.1` | OpenVPN listen address |
-| `OVPN_PROTO` | `tcp` | `tcp` or `udp`; TCP is recommended for Dev Tunnels |
-| `OVPN_NETWORK` | `10.8.0.0` | VPN subnet network |
-| `OVPN_NETMASK` | `255.255.255.0` | VPN subnet mask |
-| `OVPN_CIDR` | `10.8.0.0/24` | VPN subnet CIDR used for NAT |
-| `OVPN_CLIENT_NAME` | `devtunnel-toolkit` | Default client certificate/profile name |
-| `OVPN_REMOTE_HOST` | `127.0.0.1` | Remote host written to generated client profiles |
-| `OVPN_REMOTE_PORT` | `53194` | Remote port written to generated client profiles |
-| `OVPN_PUSH_ROUTES` | RFC1918 routes | Comma-separated routes pushed to clients |
-| `OVPN_DNS` | empty | Comma-separated DNS servers pushed to clients |
-| `OVPN_REDIRECT_GATEWAY` | `false` | Push default route when true |
-| `OVPN_EXTRA_CONFIG` | empty | Extra raw OpenVPN server configuration |
+| Variable                  | Default               | Description                                            |
+| ------------------------- | --------------------- | ------------------------------------------------------ |
+| `OVPN_PORT`             | `53194`             | OpenVPN listen port inside the container               |
+| `OVPN_LISTEN_ADDRESS`   | `127.0.0.1`         | OpenVPN listen address                                 |
+| `OVPN_PROTO`            | `tcp`               | `tcp` or `udp`; TCP is recommended for Dev Tunnels |
+| `OVPN_NETWORK`          | `10.8.0.0`          | VPN subnet network                                     |
+| `OVPN_NETMASK`          | `255.255.255.0`     | VPN subnet mask                                        |
+| `OVPN_CIDR`             | `10.8.0.0/24`       | VPN subnet CIDR used for NAT                           |
+| `OVPN_CLIENT_NAME`      | `devtunnel-toolkit` | Default client certificate/profile name                |
+| `OVPN_REMOTE_HOST`      | `127.0.0.1`         | Remote host written to generated client profiles       |
+| `OVPN_REMOTE_PORT`      | `53194`             | Remote port written to generated client profiles       |
+| `OVPN_PUSH_ROUTES`      | RFC1918 routes        | Comma-separated routes pushed to clients               |
+| `OVPN_DNS`              | empty                 | Comma-separated DNS servers pushed to clients          |
+| `OVPN_REDIRECT_GATEWAY` | `false`             | Push default route when true                           |
+| `OVPN_EXTRA_CONFIG`     | empty                 | Extra raw OpenVPN server configuration                 |
 
 ## Published images
 
@@ -486,20 +486,18 @@ repository secrets are configured.
 
 ## Versioning
 
-Images follow Git tags.
+All five images share the suite version in [`version.txt`](version.txt).
+Release Please proposes a version/changelog PR for review. After merge, the
+suite coordinator tests and publishes all images before completing the GitHub
+Release with digests, SBOMs and provenance.
 
-| Git event | Published tags |
-| --- | --- |
-| Pull request | Build only, no push |
-| Push to `main` | `edge`, `main` |
-| Tag `v1.2.3` | `v1.2.3`, `1.2.3`, `1.2`, `1`, `latest` |
+Ordinary pushes build only affected images and publish development snapshots.
+Version tags release the complete suite. Manual image builds create unique
+snapshots and never overwrite delivered versions. RC versions do not update
+`latest`; stable releases update aliases only after image verification.
 
-Release a new version:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+See [the release guide](RELEASING.md) for RC/stable promotion, registry settings,
+recovery and the distinction between image publication and deployment acceptance.
 
 ## Security notes
 

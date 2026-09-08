@@ -1,0 +1,74 @@
+# Replace the image reference, storage class and public example policy before use.
+# Keep the resulting environment-specific manifest OUTSIDE this repository.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: devtunnel-hub-data
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: devtunnel-hub-config
+data:
+  hub.json: |
+    {"hubId":"devhub","allowedDomains":["service.example.com"]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devtunnel-hub
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: devtunnel-hub
+  template:
+    metadata:
+      labels:
+        app: devtunnel-hub
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: hub
+          image: registry.example.com/devtunnel-toolkit-hub:0.1.0
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: "1", memory: 1Gi}
+          livenessProbe:
+            httpGet: {path: /live, port: 8080}
+            initialDelaySeconds: 10
+          readinessProbe:
+            httpGet: {path: /ready, port: 8080}
+            initialDelaySeconds: 5
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: config, mountPath: /config, readOnly: true}
+            - {name: runtime, mountPath: /run/hub}
+            - {name: temporary, mountPath: /tmp}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: devtunnel-hub-data}
+        - name: config
+          configMap: {name: devtunnel-hub-config}
+        - name: runtime
+          emptyDir: {medium: Memory}
+        - name: temporary
+          emptyDir: {medium: Memory}
+# Intentionally no Service, Ingress or externally accessible administration port.

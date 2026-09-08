@@ -1,0 +1,36 @@
+name: Suite checks
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      container:
+        type: boolean
+        default: true
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: images/hub/package-lock.json
+      - run: node .github/scripts/release-policy.mjs
+      - run: node --test .github/scripts/*.test.mjs
+      - run: bash -n docker/devtunnel-entrypoint images/squid/squid-entrypoint images/tinyproxy/tinyproxy-entrypoint images/openvpn/openvpn-entrypoint
+      - run: npm ci --ignore-scripts
+        working-directory: images/hub
+      - run: npm test && npm run check:public && npm audit --omit=dev --audit-level=high
+        working-directory: images/hub
+      - if: inputs.container
+        run: docker build -t devtunnel-toolkit-hub:local images/hub
+      - if: inputs.container
+        run: npm run test:container
+        working-directory: images/hub

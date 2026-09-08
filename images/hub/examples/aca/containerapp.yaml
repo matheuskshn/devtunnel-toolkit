@@ -1,0 +1,45 @@
+# Generic template, not a deployment executed by this repository.
+# Register the data Azure Files share in the target managed environment first.
+# Restrict credentials, storage keys and final resource identifiers to external IaC.
+name: devtunnel-hub
+type: Microsoft.App/containerApps
+properties:
+  managedEnvironmentId: /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/example-rg/providers/Microsoft.App/managedEnvironments/example-env
+  configuration:
+    activeRevisionsMode: Single
+    # No ingress. Relay connections are outbound.
+  template:
+    containers:
+      - name: hub
+        image: registry.example.com/devtunnel-toolkit-hub:0.1.0
+        resources: {cpu: 0.5, memory: 1Gi}
+        env:
+          - {name: HUB_RUN_DIR, value: /tmp/hub}
+          - {name: HUB_ID, value: devhub}
+          - {name: HUB_ALLOWED_PROVIDERS, value: microsoft}
+          # Replace with the permitted tenant UUID; the placeholder allows no real tenant.
+          - {name: HUB_ALLOWED_MICROSOFT_TENANTS, value: "00000000-0000-0000-0000-000000000000"}
+          - {name: HUB_ALLOWED_DOMAINS, value: service.example.com}
+          - {name: HUB_ALLOWED_PORTS, value: "80,443"}
+          - {name: HUB_CONNECT_PORTS, value: "443"}
+          - {name: HUB_MAX_SESSIONS, value: "50"}
+        volumeMounts:
+          - {volumeName: data, mountPath: /data}
+        probes:
+          - type: Liveness
+            httpGet: {path: /live, port: 8080}
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          - type: Readiness
+            httpGet: {path: /ready, port: 8080}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+    scale: {minReplicas: 1, maxReplicas: 1}
+    volumes:
+      - name: data
+        storageType: AzureFile
+        storageName: hub-data
+        mountOptions: uid=1000,gid=1000,dir_mode=0700,file_mode=0600
+# Single revision mode does NOT prevent old/new replica overlap. Drain/stop the old
+# revision before starting the new one. Validate cross-replica flock on the actual
+# mounted share. Do not enable this template in production without that gate.

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Simulate slow credential-service startup without changing the shipped image.
+sleep 0.3
+exec /usr/bin/gnome-keyring-daemon "$@"
