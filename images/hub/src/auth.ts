@@ -6,7 +6,7 @@ import { TunnelManagementHttpClient, ManagementApiVersions } from '@microsoft/de
 import { CancellationTokenSource } from '@microsoft/dev-tunnels-ssh';
 import { bindIdentity, check, HubError, type Identity, type Provider, type Session, validCanonicalId } from './model.js';
 import { privateDirectory } from './state.js';
-import { cleanEnvironment, command, launch, terminate, waitFile } from './processes.js';
+import { cleanEnvironment, command, launch, terminate, waitFile, waitSecretService } from './processes.js';
 
 export function parseJson(text: string): Record<string, any> {
   // The CLI prints a first-use license banner before JSON. Ignore only that prefix.
@@ -79,8 +79,7 @@ export class SessionRuntime {
     this.keyring = launch('gnome-keyring-daemon', ['--foreground', '--unlock', '--components=secrets', `--control-directory=${this.env.GNOME_KEYRING_CONTROL}`], this.env);
     this.keyring.stdout?.resume(); this.keyring.stdin?.end('\n');
     this.keyring.on('exit', () => { if (!this.closing) this.onFailure(); });
-    // A D-Bus round trip confirms that Secret Service is available.
-    await command('dbus-send', ['--session', '--print-reply', '--reply-timeout=5000', '--dest=org.freedesktop.secrets', '/org/freedesktop/secrets', 'org.freedesktop.DBus.Peer.Ping'], this.env);
+    await waitSecretService(this.env, this.keyring, this.abort.signal);
   }
   cli(args: string[], output?: (chunk: string) => void): Promise<string> {
     const task = this.queue.then(() => command('devtunnel', args, this.env, {

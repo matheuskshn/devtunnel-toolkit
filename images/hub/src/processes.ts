@@ -31,6 +31,29 @@ export async function waitFile(file: string, child: ChildProcess): Promise<void>
   }
   throw new HubError('SESSION_SERVICE_TIMEOUT');
 }
+export async function waitSecretService(env: NodeJS.ProcessEnv, child: ChildProcess, signal: AbortSignal,
+  options: { timeout?: number; query?: typeof command } = {}): Promise<void> {
+  const deadline = Date.now() + (options.timeout ?? 5000);
+  const checkRunning = () => {
+    if (signal.aborted) throw new HubError('COMMAND_CANCELLED_OR_TIMEOUT');
+    if (child.exitCode !== null || child.signalCode !== null) throw new HubError('SESSION_SERVICE_FAILED');
+  };
+  while (Date.now() < deadline) {
+    checkRunning();
+    // Query the bus itself: pinging an unowned service can auto-start a second,
+    // locked keyring before our explicitly unlocked daemon has registered.
+    const reply = await (options.query ?? command)('dbus-send', ['--session', '--print-reply',
+      '--reply-timeout=1000', '--dest=org.freedesktop.DBus', '/org/freedesktop/DBus',
+      'org.freedesktop.DBus.NameHasOwner', 'string:org.freedesktop.secrets'], env,
+    { timeout: Math.max(1, Math.min(1000, deadline - Date.now())), signal });
+    checkRunning();
+    if (/^\s*boolean true\s*$/m.test(reply)) return;
+    if (!/^\s*boolean false\s*$/m.test(reply)) throw new HubError('SESSION_SERVICE_INVALID_REPLY');
+    await delay(Math.max(0, Math.min(50, deadline - Date.now())));
+  }
+  checkRunning();
+  throw new HubError('SESSION_SERVICE_TIMEOUT');
+}
 export async function command(file: string, args: string[], env: NodeJS.ProcessEnv, options: {
   timeout?: number; input?: string; output?: (chunk: string) => void; signal?: AbortSignal;
 } = {}): Promise<string> {
