@@ -1,0 +1,11 @@
+{
+  "hubId": "devhub",
+  "listenerStart": 18001,
+  "listenerEnd": 18999,
+  "maxSessions": 50,
+  "allowedDomains": ["service.example.com"],
+  "allowedPorts": [80, 443],
+  "connectPorts": [443],
+  "healthPort": 8080,
+  "maintenanceSeconds": 300
+}

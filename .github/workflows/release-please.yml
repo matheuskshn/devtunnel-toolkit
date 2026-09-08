@@ -1,0 +1,87 @@
+name: Release PR
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-pr
+  cancel-in-progress: false
+jobs:
+  proposal:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    outputs:
+      created: ${{ steps.release.outputs.release_created }}
+      tag: ${{ steps.release.outputs.tag_name }}
+      sha: ${{ steps.release.outputs.sha }}
+      pr_sha: ${{ steps.pr.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+      - name: Resolve proposed PR commit
+        id: pr
+        if: steps.release.outputs.pr != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PR: ${{ steps.release.outputs.pr }}
+        run: |
+          node --input-type=module <<'JS'
+          import {appendFileSync} from 'node:fs';
+          import {github} from './.github/scripts/release.mjs';
+          const pr=JSON.parse(process.env.RELEASE_PR);
+          if(!Number.isInteger(pr.number))throw Error('INVALID_RELEASE_PR');
+          const current=await github(`pulls/${pr.number}`);
+          if(current.head.repo.full_name!==process.env.GITHUB_REPOSITORY)throw Error('UNEXPECTED_PR_REPOSITORY');
+          appendFileSync(process.env.GITHUB_OUTPUT,`sha=${current.head.sha}\n`);
+          JS
+  validate-proposal:
+    needs: proposal
+    if: needs.proposal.outputs.pr_sha != ''
+    uses: ./.github/workflows/release-checks.yml
+    with:
+      ref: ${{ needs.proposal.outputs.pr_sha }}
+      container: false
+  proposal-status:
+    needs: [proposal, validate-proposal]
+    if: always() && needs.proposal.outputs.pr_sha != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@v6
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_SHA: ${{ needs.proposal.outputs.pr_sha }}
+          CHECK_RESULT: ${{ needs.validate-proposal.result }}
+        run: |
+          node --input-type=module <<'JS'
+          import {github} from './.github/scripts/release.mjs';
+          if(!/^[a-f0-9]{40}$/.test(process.env.PR_SHA))throw Error('INVALID_PR_SHA');
+          await github(`statuses/${process.env.PR_SHA}`,{method:'POST',body:{context:'Release version checks',
+            state:process.env.CHECK_RESULT==='success'?'success':'failure',
+            description:'Suite version, policy and unit tests',
+            target_url:`https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`}});
+          JS
+  release:
+    needs: proposal
+    if: needs.proposal.outputs.created == 'true'
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/release-suite.yml
+    with:
+      tag: ${{ needs.proposal.outputs.tag }}
+      ref: ${{ needs.proposal.outputs.sha }}
+    secrets: inherit

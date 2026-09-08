@@ -1,0 +1,23 @@
+services:
+  hub:
+    image: devtunnel-toolkit-hub:local
+    build:
+      context: ../..
+    restart: unless-stopped
+    read_only: true
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /run/hub:uid=1000,gid=1000,mode=0700
+      - /tmp:mode=1777
+    volumes:
+      - hub-data:/data
+      - type: bind
+        source: ${HUB_CONFIG_FILE:?Set an absolute config path outside the repository}
+        target: /config/hub.json
+        read_only: true
+    stop_grace_period: 30s
+    # No published ports. Administration uses docker compose exec hub hub ...
+volumes:
+  hub-data:

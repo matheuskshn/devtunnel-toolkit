@@ -486,20 +486,18 @@ repository secrets are configured.
 
 ## Versioning
 
-Images follow Git tags.
+All five images share the suite version in [`version.txt`](version.txt).
+Release Please proposes a version/changelog PR for review. After merge, the
+suite coordinator tests and publishes all images before completing the GitHub
+Release with digests, SBOMs and provenance.
 
-| Git event | Published tags |
-| --- | --- |
-| Pull request | Build only, no push |
-| Push to `main` | `edge`, `main` |
-| Tag `v1.2.3` | `v1.2.3`, `1.2.3`, `1.2`, `1`, `latest` |
+Ordinary pushes build only affected images and publish development snapshots.
+Version tags release the complete suite. Manual image builds create unique
+snapshots and never overwrite delivered versions. RC versions do not update
+`latest`; stable releases update aliases only after image verification.
 
-Release a new version:
-
-```bash
-git tag v1.0.0
-git push origin v1.0.0
-```
+See [the release guide](RELEASING.md) for RC/stable promotion, registry settings,
+recovery and the distinction between image publication and deployment acceptance.
 
 ## Security notes
 
