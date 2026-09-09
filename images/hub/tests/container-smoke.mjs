@@ -34,7 +34,7 @@ try {
      const config=parseConfig({allowedDomains:['service.example.com'],allowedPorts:[80,443,18080],connectPorts:[443,18080]});
      const store=new StateStore('/data',config);await store.load();
      for(const [index,id] of ['user-a','user-b'].entries()){const s=store.add(id,'github');
-       s.identity={provider:'github',user_id:'github:'+String(1001+index),user_login:id};s.tunnel_id='devhub-'+id+'.use1';s.status='ready';}
+       s.identity={provider:'github',user_id:'github:'+String(1001+index),user_login:id};store.resolveName(s);s.tunnel_id='devhub-'+id+'.use1';s.status='ready';}
      await store.save();`]);
   const invalid=docker(['run','--rm','--network','none',...restrictions,
     '--env','HUB_ALLOWED_DOMAINS=*',image],false);
@@ -42,6 +42,7 @@ try {
   docker(['create','--name',container,'--network',network,'--network-alias','service.example.com','--network-alias','other.example.com',...restrictions,
     '--env','HUB_ALLOWED_DOMAINS=service.example.com','--env','HUB_ALLOWED_PORTS=80,443,18080',
     '--env','HUB_CONNECT_PORTS=443,18080','--env','HUB_HEALTH_PORT=8081',
+    '--env','HUB_TUNNEL_NAME_TEMPLATE=custom-{username}',
     '--mount',`type=bind,src=${tests},dst=/tests,readonly`,image]);
   // Docker DNS resolves the test-only alias on an isolated bridge.
   docker(['start',container]);await ready();
@@ -66,6 +67,8 @@ try {
   const sessions=JSON.parse(docker(['exec',container,'hub','session','list']).stdout);
   assert.equal(sessions.find(s=>s.id==='user-a').listener,18001);
   assert.equal(sessions.find(s=>s.id==='user-a').tunnel_id,'devhub-user-a.use1');
+  assert.equal(sessions.find(s=>s.id==='user-a').tunnel_name,'devhub-user-a');
+  assert.equal(sessions.find(s=>s.id==='user-c').tunnel_name_template,'custom-{username}');
   assert.equal(sessions.find(s=>s.id==='user-c').provider,'microsoft');
   docker(['stop','--timeout','15',container]);
   assert.equal(JSON.parse(docker(['inspect',container]).stdout)[0].State.ExitCode,0);

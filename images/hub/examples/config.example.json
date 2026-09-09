@@ -1,5 +1,6 @@
 {
   "hubId": "devhub",
+  "tunnelNameTemplate": "{hub_id}-{username}",
   "listenerStart": 18001,
   "listenerEnd": 18999,
   "maxSessions": 50,

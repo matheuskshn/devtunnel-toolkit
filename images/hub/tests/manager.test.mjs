@@ -33,7 +33,7 @@ test('sessions enroll, stop, logout and remove without reassigning audit identit
 test('one pending login does not block another session; duplicate operations are rejected',async t=>{
   const m=await manager(t);await m.dispatch(['session','add','user-a'],()=>{});
   let release;const barrier=new Promise(resolve=>release=resolve);
-  m.runtime=async()=>({login:()=>barrier});
+  m.runtime=async()=>({login:async()=>{await barrier;bindIdentity(m.store.get('user-a'),{provider:'microsoft',user_id:'microsoft:object-a',user_login:'user-a@example.com'});}});
   const pending=m.dispatch(['session','login','user-a'],()=>{});
   await m.dispatch(['session','add','user-b','--provider','github'],()=>{});
   assert.equal((await m.dispatch(['session','list'],()=>{})).length,2);
@@ -66,7 +66,7 @@ test('malformed commands cannot inject CLI flags or external paths',async t=>{
   assert.equal(m.store.state.sessions.length,0);
 });
 test('only a confirmed missing resource permits recreation with the exact name and cluster',async t=>{
-  const m=await manager(t);const s=m.store.add('user-a','github');s.tunnel_id='devhub-user-a.use1';
+  const m=await manager(t);const s=m.store.add('user-a','github','devhub-user-a');s.tunnel_id='devhub-user-a.use1';
   const details={tunnelId:'devhub-user-a',clusterId:'use1',ports:[{portNumber:3140}],accessControl:{entries:[]}};
   let attempts=0;const commands=[];
   await m.provision(s,{details:async()=>{if(attempts++===0)throw new HubError('TUNNEL_NOT_FOUND');return details;},

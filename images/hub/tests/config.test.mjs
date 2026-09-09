@@ -39,7 +39,7 @@ test('all policy environment fields use the same validated configuration schema'
     HUB_ALLOWED_PROVIDERS:'microsoft',HUB_ALLOWED_MICROSOFT_TENANTS:'00000000-0000-0000-0000-000000000000',
     HUB_HEALTH_PORT:'8081',HUB_MAINTENANCE_SECONDS:'120',HUB_RUN_DIR:'/tmp/hub',
   });
-  assert.deepEqual(config, {hubId:'test-hub',listenerStart:19001,listenerEnd:19999,maxSessions:10,
+  assert.deepEqual(config, {hubId:'test-hub',tunnelNameTemplate:'{hub_id}-{username}',listenerStart:19001,listenerEnd:19999,maxSessions:10,
     allowedDomains:['service.example.com'],allowAllDomains:false,allowedPorts:[80,443,22],connectPorts:[443,22],
     allowedProviders:['microsoft'],allowedMicrosoftTenants:['00000000-0000-0000-0000-000000000000'],
     healthPort:8081,maintenanceSeconds:120});

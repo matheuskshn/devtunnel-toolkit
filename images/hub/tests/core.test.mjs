@@ -19,6 +19,7 @@ test('fixed names and immutable listeners survive restart, tombstones prevent re
   const first = await store(t);
   const a = first.add('user-a', 'github'); const b = first.add('user-b', 'microsoft', 'private-user-b');
   assert.equal(a.listener, 18001); assert.equal(b.listener, 18002);
+  a.identity = identity; first.resolveName(a);
   assert.equal(a.tunnel_name, 'devhub-user-a');
   a.identity = identity; a.tunnel_id = 'devhub-user-a.use1'; a.status = 'removed';
   await first.save();
