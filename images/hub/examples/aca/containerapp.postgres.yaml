@@ -1,0 +1,44 @@
+# Generic template. Provision the database and the two ACA secrets separately.
+# Keep actual resource names, credentials and final manifests outside this repo.
+# This update template references existing secrets; it does not define their values.
+name: devtunnel-hub
+type: Microsoft.App/containerApps
+properties:
+  managedEnvironmentId: /subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/example-rg/providers/Microsoft.App/managedEnvironments/example-env
+  configuration:
+    activeRevisionsMode: Single
+    # No ingress. Relay connections are outbound.
+  template:
+    containers:
+      - name: hub
+        image: registry.example.com/devtunnel-toolkit-hub:0.1.0
+        resources: {cpu: 0.5, memory: 1Gi}
+        env:
+          - {name: HUB_RUN_DIR, value: /tmp/hub}
+          - {name: HUB_ID, value: devhub}
+          - {name: HUB_STORAGE_BACKEND, value: postgres}
+          - {name: HUB_PG_HOST, value: postgres.example.com}
+          - {name: HUB_PG_PORT, value: "5432"}
+          - {name: HUB_PG_DATABASE, value: devtunnel_hub}
+          - {name: HUB_PG_USER, value: hub}
+          - {name: HUB_PG_SSLMODE, value: verify-full}
+          - {name: HUB_PG_PASSWORD, secretRef: hub-pg-password}
+          - {name: HUB_CREDENTIAL_KEY, secretRef: hub-credential-key}
+          - {name: HUB_CREDENTIAL_KEY_ID, value: primary}
+          - {name: HUB_ALLOWED_PROVIDERS, value: microsoft}
+          - {name: HUB_ALLOWED_MICROSOFT_TENANTS, value: "00000000-0000-0000-0000-000000000000"}
+          - {name: HUB_ALLOWED_DOMAINS, value: service.example.com}
+          - {name: HUB_ALLOWED_PORTS, value: "80,443"}
+          - {name: HUB_CONNECT_PORTS, value: "443"}
+        probes:
+          - type: Liveness
+            httpGet: {path: /live, port: 8080}
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          - type: Readiness
+            httpGet: {path: /ready, port: 8080}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+    scale: {minReplicas: 1, maxReplicas: 1}
+# Drain/stop the previous manager before starting a replacement. The database
+# advisory lock rejects concurrent managers; a lost connection stops workers.

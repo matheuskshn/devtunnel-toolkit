@@ -198,6 +198,13 @@ database; configure a reliable log collector and retention policy in deployment.
 
 ## Persistence and lifecycle
 
+Choose `HUB_STORAGE_BACKEND=filesystem` (default) or `postgres`. There is no
+automatic fallback or import between backends. Stop the old manager before
+changing backend; moving existing logins requires a separately planned migration
+or new user authentication. Keep `HUB_ID` stable across replacements.
+
+### Filesystem / Azure Files
+
 | Path         | Contents                                                               | Persistence                  |
 | ------------ | ---------------------------------------------------------------------- | ---------------------------- |
 | `/config`  | Deployment configuration, mounted read-only                            | Administrator managed        |
@@ -219,6 +226,73 @@ using the same data volume exits with code 75. It does not delete a stale PID
 file to steal ownership. Only one active manager is supported. Cross-host storage
 locking is a deployment acceptance gate, not a guarantee inferred from Docker.
 
+### PostgreSQL
+
+Provision a dedicated database first. The Hub creates versioned tables in the
+`devtunnel_hub` schema transactionally; the initial role needs schema/table creation
+permissions. Use a dedicated restricted role for production, and do not grant
+database or container administration to tunnel users. PostgreSQL 16 is covered
+by integration tests. Use a direct connection or session pooling, never transaction
+pooling: the manager holds a session-level advisory lock for its lifetime.
+
+| Variable | Purpose |
+| --- | --- |
+| `HUB_STORAGE_BACKEND=postgres` | Select the database backend; `/data` is unused |
+| `HUB_PG_HOST`, `HUB_PG_DATABASE`, `HUB_PG_USER`, `HUB_PG_PASSWORD` | Required database connection settings |
+| `HUB_PG_PORT` | Port, default `5432` |
+| `HUB_PG_SSLMODE` | Default `verify-full`; `disable` is only for isolated local tests |
+| `HUB_PG_CA_FILE` | Optional mounted PEM trust bundle; otherwise use system trust |
+| `HUB_CREDENTIAL_KEY` | Required random 32-byte key, base64 encoded |
+| `HUB_CREDENTIAL_KEY_ID` | Active key label, default `primary` |
+| `HUB_CREDENTIAL_PREVIOUS_KEYS` | Optional JSON map of previous key labels to base64 keys |
+
+TLS checks the server certificate and hostname. Inject the password and encryption
+key using platform secrets, not image layers, source files or command arguments.
+Generate the encryption key once, for example with `openssl rand -base64 32` in a
+private administrative environment, and retain it across revisions. Back it up
+separately from the database. Without the correct key, credentials cannot be restored.
+
+State, fixed names, listener assignments, identity bindings and tombstones are
+stored as a revision-checked JSON document. Credential packages are separate
+AES-256-GCM authenticated ciphertext, bound to Hub ID, session ID and generation.
+Session metadata is **not** application-encrypted; protect database access,
+platform encryption and backups accordingly. Audit still goes to stdout.
+
+The CLI requires real files and Secret Service. On startup the Hub restores each
+home into a new private directory under `HUB_RUN_DIR`. D-Bus, sockets, PIDs and
+keyring processes are recreated, not serialized. CLI operations for a session are
+serialized; after each operation, including failed commands that may have changed
+tokens, its keyring is stopped before the home is encrypted and committed. The
+CLI's `.net` extracted binaries are excluded and regenerated locally. Archive
+size/file-count limits, link rejection and path validation bound restoration.
+Local homes are plaintext inside the trusted container, mode 0700/0600; use tmpfs
+where available and never mount this runtime directory into another workload.
+Graceful shutdown removes its temporary homes; container replacement discards
+ephemeral storage. An abrupt process exit can leave private files until replacement.
+
+A durable dirty marker is written **before** each credential operation. If the
+process crashes before checkpoint completion, only that session requires login
+again, instead of silently restoring a potentially superseded token cache. A clean
+checkpoint restores without an interactive login, subject to provider validity.
+Logout checkpoints credential deletion, and removal preserves audit tombstones.
+Backups can still contain earlier logins; apply retention and provider revocation.
+
+The database lock prevents a second active manager for the same database/Hub ID
+(exit 75). The manager monitors its dedicated connection and terminates workers
+if ownership becomes uncertain. There is no reconnect-with-stale-state or local
+fallback. Database outages interrupt all sessions. Keep one replica and use
+stop/drain/start deployments; this is not active-active hosting or a zero-overlap
+guarantee under arbitrary network partitions/process suspension.
+
+For key rotation, supply a new active ID/key plus the old key in
+`HUB_CREDENTIAL_PREVIOUS_KEYS`, then restart. Subsequent checkpoints use the new
+key. Retain old keys until **all** required packages and retained backups have
+been migrated or retired. Changing only the key without the previous key fails
+closed. Database backups and the matching keys are both required for recovery;
+test restoration into an isolated deployment before using restored credentials.
+
+### Session lifecycle
+
 On restart, sessions whose desired state is running try to resume. A failed or
 expired login marks just that session `reauth_required`; it does not restart
 healthy users. Transient failures get bounded exponential retries. Policy and
@@ -238,6 +312,14 @@ The [ACA template](examples/aca/containerapp.yaml) uses environment variables fo
 configuration, Azure Files for data, and `/tmp/hub` for ephemeral runtime files. It has no ingress and
 one replica. Register shares in the managed environment separately; keep all
 real Azure identifiers, keys and final manifests outside this repository.
+
+The [PostgreSQL ACA template](examples/aca/containerapp.postgres.yaml) instead
+uses database persistence, platform secret references and ephemeral `/tmp/hub`.
+No Azure Files share or storage mount is needed. Provision the database and ACA
+secrets separately, and verify private DNS, port access and trusted database TLS
+from the container's network. The same variables work with Docker, Compose or
+Kubernetes; omit the data volume for this backend, but retain private writable
+runtime directories and all container security controls.
 
 `Single` revision mode and `maxReplicas: 1` do not prevent rollout overlap between
 revisions. Use a stop/drain/start rollout for v1, accept downtime, and verify
@@ -262,6 +344,7 @@ npm run check:public
 npm audit --omit=dev --audit-level=high
 docker build -t devtunnel-toolkit-hub:local .
 npm run test:container
+npm run test:postgres
 ```
 
 Tests use synthetic identities and isolated Docker resources, clean them up, and
@@ -271,6 +354,11 @@ state and concurrency, separate D-Bus/keyrings, keyring persistence, non-root
 read-only execution, storage lock, restart and SIGTERM. In-memory SSH transports
 are test-only; these tests do not establish connectivity to the real relay.
 
+The PostgreSQL suite starts an isolated PostgreSQL 16 container without published
+ports. It checks encrypted real keyrings, fresh-directory restoration, per-user
+isolation, interrupted checkpoints, key rotation, deletion, competing managers,
+SIGKILL/replacement and fail-closed connection loss. It needs no cloud credentials.
+
 Before release, also verify:
 
 - Real Microsoft and GitHub CLI identity/tunnel/token JSON contracts and
@@ -279,6 +367,8 @@ Before release, also verify:
   restart with cached login, ACL rejection, and session-specific revocation.
 - Token expiry/refresh and eventual interactive reauthentication over time.
 - The target ACA Azure Files mount, permissions, lock contention and rollout.
+- Or, for PostgreSQL: verified TLS, database permissions, credential restoration,
+  lock contention, connection-loss shutdown and stop/drain/start rollout.
 - ARM64 build/runtime and a container OS/package vulnerability scan.
 
 The SDK 1.3.56 depends on `uuid` 3.4.0, which is affected by the
@@ -341,3 +431,6 @@ data is absent. Human diff review is required before every commit or publication
 References: [Dev Tunnels CLI](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands),
 [Dev Tunnels security](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/security),
 [Squid log formats](https://www.squid-cache.org/Doc/config/logformat/).
+Storage references: [PostgreSQL advisory locks](https://www.postgresql.org/docs/16/explicit-locking.html#ADVISORY-LOCKS),
+[node-postgres TLS](https://node-postgres.com/features/ssl),
+[ACA secrets](https://learn.microsoft.com/en-us/azure/container-apps/manage-secrets).

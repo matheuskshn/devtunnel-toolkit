@@ -5,7 +5,7 @@ import type { Tunnel } from '@microsoft/dev-tunnels-contracts';
 import { TunnelManagementHttpClient, ManagementApiVersions } from '@microsoft/dev-tunnels-management';
 import { CancellationTokenSource } from '@microsoft/dev-tunnels-ssh';
 import { bindIdentity, check, HubError, type Identity, type Provider, type Session, validCanonicalId } from './model.js';
-import { privateDirectory } from './state.js';
+import { privateDirectory, type Persistence } from './state.js';
 import { cleanEnvironment, command, launch, terminate, waitFile, waitSecretService } from './processes.js';
 
 export function parseJson(text: string): Record<string, any> {
@@ -56,10 +56,12 @@ export class SessionRuntime {
   private bus?: ChildProcess;
   private keyring?: ChildProcess;
   private closing = false;
+  private cycling = false;
+  private servicesFailed = false;
   private queue: Promise<unknown> = Promise.resolve();
   readonly abort = new AbortController();
   constructor(readonly session: Session, readonly dataDir: string, readonly runDir: string,
-    readonly onFailure: () => void, readonly allowedTenants: string[] = []) {
+    readonly onFailure: () => void, readonly allowedTenants: string[] = [], readonly persistence?: Persistence) {
     const home = path.join(dataDir, 'sessions', session.id, 'home');
     this.env = { ...cleanEnvironment(), HOME: home, XDG_CONFIG_HOME: `${home}/.config`,
       XDG_DATA_HOME: `${home}/.local/share`, XDG_CACHE_HOME: `${home}/.cache`,
@@ -68,23 +70,56 @@ export class SessionRuntime {
   }
   async open(): Promise<void> {
     await privateDirectory(this.env.HOME!);
+    await this.persistence?.restore(this.session.id, this.env.HOME!);
+    if (!this.persistence) await this.openServices();
+  }
+  private async openServices(): Promise<void> {
+    check(!this.closing && !this.abort.signal.aborted, 'COMMAND_CANCELLED_OR_TIMEOUT');
+    this.cycling = false;
     await privateDirectory(this.env.XDG_CONFIG_HOME!);
     await privateDirectory(this.env.XDG_DATA_HOME!);
     await privateDirectory(this.env.XDG_CACHE_HOME!);
     await privateDirectory(this.runDir);
     this.bus = launch('dbus-daemon', ['--session', '--nofork', `--address=${this.env.DBUS_SESSION_BUS_ADDRESS}`], this.env);
     this.bus.stdout?.resume();
-    this.bus.on('exit', () => { if (!this.closing) this.onFailure(); });
+    this.bus.on('exit', () => this.serviceExit());
     await waitFile(`${this.runDir}/bus`, this.bus);
     this.keyring = launch('gnome-keyring-daemon', ['--foreground', '--unlock', '--components=secrets', `--control-directory=${this.env.GNOME_KEYRING_CONTROL}`], this.env);
     this.keyring.stdout?.resume(); this.keyring.stdin?.end('\n');
-    this.keyring.on('exit', () => { if (!this.closing) this.onFailure(); });
+    this.keyring.on('exit', () => this.serviceExit());
     await waitSecretService(this.env, this.keyring, this.abort.signal);
   }
+  private serviceExit(): void {
+    if (!this.closing && !this.cycling) {
+      this.servicesFailed = true;
+      if (this.persistence) this.abort.abort();
+      this.onFailure();
+    }
+  }
   cli(args: string[], output?: (chunk: string) => void): Promise<string> {
-    const task = this.queue.then(() => command('devtunnel', args, this.env, {
+    return this.withCredentials(() => command('devtunnel', args, this.env, {
       timeout: output ? 600000 : 60000, output, signal: this.abort.signal,
     }));
+  }
+  withCredentials<T>(action: () => Promise<T>): Promise<T> {
+    const task = this.queue.then(async () => {
+      check(!this.closing && !this.abort.signal.aborted, 'COMMAND_CANCELLED_OR_TIMEOUT');
+      if (this.persistence) {
+        await this.persistence.beginAuth(this.session.id);
+        await this.openServices().catch(async e => { await this.stopServices(); throw e; });
+      }
+      try {
+        return await action();
+      } finally {
+        if (this.persistence) {
+          // Serialize a quiescent home, including changes from failed/refresh commands.
+          // The DB dirty marker remains set if this process dies before commit.
+          await this.stopServices();
+          check(!this.servicesFailed, 'SESSION_SERVICE_FAILED');
+          await this.persistence.checkpoint(this.session.id, this.env.HOME!);
+        }
+      }
+    });
     this.queue = task.catch(() => {}); return task;
   }
   async identity(): Promise<Identity> {
@@ -137,7 +172,15 @@ export class SessionRuntime {
   async close(): Promise<void> {
     this.closing = true; this.abort.abort();
     await this.queue;
+    await this.stopServices();
+    if (this.persistence) await rm(this.env.HOME!, {recursive:true, force:true});
+  }
+  private async stopServices(): Promise<void> {
+    this.cycling = true;
     await terminate(this.keyring); await terminate(this.bus);
+    const killed = this.keyring?.signalCode === 'SIGKILL';
+    this.keyring = undefined; this.bus = undefined;
     await rm(this.runDir, { recursive: true, force: true });
+    check(!killed, 'CREDENTIAL_SERVICE_FORCED_EXIT');
   }
 }

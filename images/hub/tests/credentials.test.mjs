@@ -1,0 +1,41 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomBytes} from 'node:crypto';
+import {mkdtemp,rm,mkdir,writeFile,readFile,symlink} from 'node:fs/promises';
+import os from 'node:os';import path from 'node:path';
+import {credentialKeys,seal,unseal,packHome,unpackHome} from '../dist/credentials.js';
+import {postgresConfig} from '../dist/postgres.js';
+const key = () => randomBytes(32).toString('base64');
+test('credential encryption authenticates hub/session/generation and supports explicit key rotation',()=>{
+  const oldKey=key(),ring=credentialKeys({HUB_CREDENTIAL_KEY:oldKey});
+  const ciphertext=seal(Buffer.from('synthetic-secret'),'hub:user-a:1',ring);
+  assert.ok(!ciphertext.includes('synthetic-secret'));
+  assert.equal(unseal(ciphertext,'hub:user-a:1',ring).toString(),'synthetic-secret');
+  for(const ctx of ['hub:user-b:1','another:user-a:1','hub:user-a:2'])assert.throws(()=>unseal(ciphertext,ctx,ring));
+  const changed=JSON.parse(ciphertext);changed.data='AAAA';
+  assert.throws(()=>unseal(Buffer.from(JSON.stringify(changed)),'hub:user-a:1',ring));
+  const rotated=credentialKeys({HUB_CREDENTIAL_KEY_ID:'next',HUB_CREDENTIAL_KEY:key(),HUB_CREDENTIAL_PREVIOUS_KEYS:JSON.stringify({primary:oldKey})});
+  assert.equal(unseal(ciphertext,'hub:user-a:1',rotated).toString(),'synthetic-secret');
+  assert.throws(()=>credentialKeys({}));assert.throws(()=>credentialKeys({HUB_CREDENTIAL_KEY:'short'}));
+});
+test('credential packages restore exact bytes and reject traversal, links and overwrites',async t=>{
+  const dir=await mkdtemp(path.join(os.tmpdir(),'hub-package-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+  const home=path.join(dir,'home'),restored=path.join(dir,'restored');
+  await mkdir(path.join(home,'.local/share/keyrings'),{recursive:true});await mkdir(restored);
+  const bytes=randomBytes(256);await writeFile(path.join(home,'.local/share/keyrings/login.keyring'),bytes);
+  await mkdir(path.join(home,'.net'));await writeFile(path.join(home,'.net','extracted.dll'),Buffer.alloc(5*1024*1024));
+  const packed=await packHome(home);await unpackHome(packed,restored);
+  assert.ok(!packed.includes('extracted.dll'));
+  assert.deepEqual(await readFile(path.join(restored,'.local/share/keyrings/login.keyring')),bytes);
+  await assert.rejects(unpackHome(packed,restored));
+  for(const name of ['../escape','/absolute','a/../../b','a\\b'])await assert.rejects(unpackHome(Buffer.from(JSON.stringify({v:1,files:[{path:name,data:''}]})),restored));
+  await symlink('/etc/passwd',path.join(home,'bad'));await assert.rejects(packHome(home),/UNSAFE/);
+});
+test('Postgres TLS verifies certificates by default and credentials are required',async()=>{
+  const env={HUB_PG_HOST:'postgres.example.com',HUB_PG_USER:'hub',HUB_PG_DATABASE:'hub',HUB_PG_PASSWORD:'synthetic-only'};
+  assert.equal((await postgresConfig(env)).ssl.rejectUnauthorized,true);
+  assert.equal((await postgresConfig({...env,HUB_PG_SSLMODE:'disable'})).ssl,false);
+  await assert.rejects(postgresConfig({...env,HUB_PG_SSLMODE:'require'}),/TLS/);
+  await assert.rejects(postgresConfig({...env,HUB_PG_PORT:'bad'}),/PORT/);
+  await assert.rejects(postgresConfig({}),/REQUIRED/);
+});
