@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-rc.2](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.1...v0.1.0-rc.2) (2026-09-09)
+
+
+### Features
+
+* **hub:** add encrypted PostgreSQL session persistence ([#6](https://github.com/matheuskshn/devtunnel-toolkit/issues/6)) ([644482d](https://github.com/matheuskshn/devtunnel-toolkit/commit/644482dd658307381a961eaebad6e126ef36836d))
+
 ## 0.1.0-rc.1 (2026-09-08)
 
 
