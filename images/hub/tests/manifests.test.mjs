@@ -38,6 +38,22 @@ test('environment-only Compose injects an external env file and retains isolated
   assert.equal(compose.services.hub.read_only,true);
   assert.deepEqual(compose.services.hub.cap_drop,['ALL']);
 });
+test('PostgreSQL ACA example uses secret references, verified TLS and no durable volume',async()=>{
+  const {properties:{configuration,template}}=parse(await read('../examples/aca/containerapp.postgres.yaml'));
+  assert.equal(configuration.activeRevisionsMode,'Single');
+  assert.equal(configuration.ingress,undefined);
+  assert.deepEqual(template.scale,{minReplicas:1,maxReplicas:1});
+  assert.equal(template.volumes,undefined);
+  const container=template.containers[0];
+  assert.equal(container.volumeMounts,undefined);
+  const env=Object.fromEntries(container.env.map(e=>[e.name,e]));
+  assert.equal(env.HUB_STORAGE_BACKEND.value,'postgres');
+  assert.equal(env.HUB_PG_SSLMODE.value,'verify-full');
+  for(const name of ['HUB_PG_PASSWORD','HUB_CREDENTIAL_KEY']){
+    assert.ok(env[name].secretRef);assert.equal(env[name].value,undefined);
+  }
+  assert.equal(env.HUB_RUN_DIR.value,'/tmp/hub');
+});
 test('Hub publishing requires tests and both architectures; PR validation has no registry credentials',async()=>{
   const workflow=parse(await read('../../../.github/workflows/hub.yml'));
   assert.deepEqual(workflow.permissions,{contents:'read'});
@@ -59,6 +75,7 @@ test('Hub publishing requires tests and both architectures; PR validation has no
   }
   assert.ok(tests.steps.some(s=>s.run==='npm run test:container'));
   assert.equal(tests.steps.find(s=>s.run==='npm run test:container').if,"needs.changes.outputs.hub == 'true'");
+  assert.equal(tests.steps.find(s=>s.run==='npm run test:postgres').if,"needs.changes.outputs.hub == 'true'");
   assert.ok(tests.steps.some(s=>s.run==='npm audit --omit=dev --audit-level=high'));
   const build=publish.steps.find(s=>s.uses?.startsWith('docker/build-push-action')).with;
   assert.equal(build.context,'images/hub');assert.equal(build.platforms,'linux/amd64,linux/arm64');

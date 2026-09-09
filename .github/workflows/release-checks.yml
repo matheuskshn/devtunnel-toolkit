@@ -34,3 +34,6 @@ jobs:
       - if: inputs.container
         run: npm run test:container
         working-directory: images/hub
+      - if: inputs.container
+        run: npm run test:postgres
+        working-directory: images/hub

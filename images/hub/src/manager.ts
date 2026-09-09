@@ -7,7 +7,7 @@ import { fork, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
 import { check, errorCode, HubError, type Session, type Config, type Provider } from './model.js';
-import { StateStore, privateDirectory, atomicWrite } from './state.js';
+import { StateStore, privateDirectory, atomicWrite, type Persistence } from './state.js';
 import { SessionRuntime, parseJson, canonicalTunnel } from './auth.js';
 import { squidConfig, auditRecord } from './squid.js';
 import { launch, terminate, command, cleanEnvironment } from './processes.js';
@@ -30,8 +30,8 @@ export class Manager {
   private clients = new Set<Socket>();
   private auditStream?: ReadStream;
   private auditFd?: number;
-  constructor(readonly config: Config, readonly dataDir: string, readonly runDir: string) {
-    this.store = new StateStore(dataDir, config);
+  constructor(readonly config: Config, readonly dataDir: string, readonly runDir: string, readonly persistence?: Persistence) {
+    this.store = new StateStore(dataDir, config, persistence);
   }
   log(event: string, session?: Session, code?: string): void {
     process.stdout.write(JSON.stringify({ time: new Date().toISOString(), event, session_id: session?.id, code }) + '\n');
@@ -130,7 +130,7 @@ export class Manager {
           s.status = 'error'; s.error = 'SESSION_SERVICE_FAILED';
           void this.stopWorker(s).then(() => this.store.save()).catch(() => {});
         }
-      }, this.config.allowedMicrosoftTenants);
+      }, this.config.allowedMicrosoftTenants, this.persistence);
       this.runtimes.set(s.id, runtime);
       try { await runtime.open(); } catch (e) { await runtime.close(); this.runtimes.delete(s.id); throw e; }
     }
@@ -311,6 +311,13 @@ export class Manager {
     await terminate(this.squid);
     if (this.auditFd !== undefined) writeSync(this.auditFd, '\n');
     this.auditStream?.destroy();
-    await this.store.save(); this.log('manager_stopped');
+    if (this.store.state) await this.store.save(); this.log('manager_stopped');
+  }
+  fence(): void {
+    this.healthy = false;
+    // A lost database session must not leave an old relay host serving traffic.
+    for (const runtime of this.runtimes.values()) runtime.abort.abort();
+    for (const worker of this.workers.values()) worker.kill('SIGKILL');
+    this.squid?.kill('SIGKILL');
   }
 }

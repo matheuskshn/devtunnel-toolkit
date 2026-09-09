@@ -37,6 +37,8 @@ jobs:
         run: docker build -t devtunnel-toolkit-hub:local .
       - if: needs.changes.outputs.hub == 'true'
         run: npm run test:container
+      - if: needs.changes.outputs.hub == 'true'
+        run: npm run test:postgres
   architectures:
     needs: [changes, test]
     if: needs.changes.outputs.hub == 'true'
