@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-rc.4](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.3...v0.1.0-rc.4) (2026-09-09)
+
+
+### Features
+
+* **hub:** derive fixed tunnel names from verified logins ([#10](https://github.com/matheuskshn/devtunnel-toolkit/issues/10)) ([88f7c48](https://github.com/matheuskshn/devtunnel-toolkit/commit/88f7c48e0d983505333f3c78d872c5f1fd1eaa6c))
+
 ## [0.1.0-rc.3](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.2...v0.1.0-rc.3) (2026-09-09)
 
 
