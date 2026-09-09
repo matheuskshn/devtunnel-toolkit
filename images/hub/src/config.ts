@@ -7,6 +7,7 @@ const fields = {
   HUB_LISTENER_END: ['listenerEnd', 'number'],
   HUB_MAX_SESSIONS: ['maxSessions', 'number'],
   HUB_ALLOWED_DOMAINS: ['allowedDomains', 'list'],
+  HUB_ALLOW_ALL_DOMAINS: ['allowAllDomains', 'boolean'],
   HUB_ALLOWED_PORTS: ['allowedPorts', 'numbers'],
   HUB_CONNECT_PORTS: ['connectPorts', 'numbers'],
   HUB_ALLOWED_PROVIDERS: ['allowedProviders', 'list'],
@@ -38,6 +39,10 @@ export async function loadConfig(file?: string, env: NodeJS.ProcessEnv = process
       return Number(item);
     };
     if (kind === 'string') merged[key] = value;
+    else if (kind === 'boolean') {
+      check(value === 'true' || value === 'false', `INVALID_${name}`);
+      merged[key] = value === 'true';
+    }
     else if (kind === 'number') merged[key] = number(value);
     else {
       const items = value === '' ? [] : value.split(',').map(item => item.trim());

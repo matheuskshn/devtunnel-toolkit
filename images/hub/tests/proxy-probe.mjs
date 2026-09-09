@@ -44,8 +44,12 @@ try {
   const httpRequest='GET http://service.example.com:18080/private/path?token=synthetic-query-secret HTTP/1.1\r\nHost: service.example.com:18080\r\nAuthorization: Bearer synthetic-header-secret\r\nConnection: close\r\n\r\n';
   const results=await Promise.all([request(a.pfs,httpRequest),request(b.pfs,httpRequest)]);
   assert.ok(results.every(r=>r.startsWith('HTTP/1.1 200')&&r.includes('synthetic-backend-ok')));
-  const denied=await request(a.pfs,'CONNECT denied.example.com:443 HTTP/1.1\r\nHost: denied.example.com:443\r\nConnection: close\r\n\r\n');
-  assert.match(denied,/^HTTP\/1\.1 403/);
+  const other=await request(a.pfs,'GET http://other.example.com:18080/ HTTP/1.1\r\nHost: other.example.com:18080\r\nConnection: close\r\n\r\n');
+  assert.match(other,process.env.HUB_ALLOW_ALL_DOMAINS==='true'?/^HTTP\/1\.1 200/:/^HTTP\/1\.1 403/);
+  for(const destination of ['127.0.0.1','0.0.0.0','169.254.169.254']){
+    const denied=await request(a.pfs,`GET http://${destination}/ HTTP/1.1\r\nHost: ${destination}\r\nConnection: close\r\n\r\n`);
+    assert.match(denied,/^HTTP\/1\.1 403/);
+  }
   const portDenied=await request(a.pfs,'CONNECT service.example.com:22 HTTP/1.1\r\nHost: service.example.com:22\r\nConnection: close\r\n\r\n');
   assert.match(portDenied,/^HTTP\/1\.1 403/);
   // CONNECT carries arbitrary TCP bytes. No TLS decryption/inspection is added.
