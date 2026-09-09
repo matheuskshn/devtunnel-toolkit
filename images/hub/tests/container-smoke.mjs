@@ -39,7 +39,7 @@ try {
   const invalid=docker(['run','--rm','--network','none',...restrictions,
     '--env','HUB_ALLOWED_DOMAINS=*',image],false);
   assert.equal(invalid.status,1);assert.match(invalid.stderr,/INVALID_DOMAIN_ALLOWLIST/);
-  docker(['create','--name',container,'--network',network,'--network-alias','service.example.com',...restrictions,
+  docker(['create','--name',container,'--network',network,'--network-alias','service.example.com','--network-alias','other.example.com',...restrictions,
     '--env','HUB_ALLOWED_DOMAINS=service.example.com','--env','HUB_ALLOWED_PORTS=80,443,18080',
     '--env','HUB_CONNECT_PORTS=443,18080','--env','HUB_HEALTH_PORT=8081',
     '--mount',`type=bind,src=${tests},dst=/tests,readonly`,image]);
@@ -69,6 +69,14 @@ try {
   assert.equal(sessions.find(s=>s.id==='user-c').provider,'microsoft');
   docker(['stop','--timeout','15',container]);
   assert.equal(JSON.parse(docker(['inspect',container]).stdout)[0].State.ExitCode,0);
+  docker(['rm',container]);
+  docker(['run','--detach','--name',container,'--network',network,'--network-alias','service.example.com','--network-alias','other.example.com',...restrictions,
+    '--env','HUB_ALLOW_ALL_DOMAINS=true','--env','HUB_ALLOWED_DOMAINS=service.example.com',
+    '--env','HUB_ALLOWED_PORTS=80,443,18080','--env','HUB_CONNECT_PORTS=443,18080',
+    '--mount',`type=bind,src=${tests},dst=/tests,readonly`,image]);await ready();
+  console.log((await exec('docker',['exec',container,'node','/tests/proxy-probe.mjs'],{timeout:30000})).stdout.trim());
+  docker(['stop','--timeout','15',container]);
+  console.log('PASS explicit all-domain access permits an unlisted destination while retaining metadata, loopback, port and listener restrictions');
   console.log('PASS environment-only policy, custom health port, invalid-config rejection, non-root/read-only runtime, storage lock, CLI, redacted audit, restart and SIGTERM');
 } finally {
   // These exact ephemeral names were created by this test; no shared resources touched.

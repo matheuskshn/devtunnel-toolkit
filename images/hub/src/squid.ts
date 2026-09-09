@@ -22,12 +22,15 @@ export function squidConfig(config: Config, sessions: Session[], runDir: string)
     'http_access deny !allowed_ports', 'http_access deny CONNECT !connect_ports',
     // Block instance metadata/link-local addresses even if a permitted name resolves there.
     'acl metadata dst 169.254.0.0/16 fe80::/10', 'http_access deny metadata',
-    'acl loopback_destination dst 127.0.0.0/8 ::1/128', 'http_access deny loopback_destination',
+    'acl loopback_destination dst 0.0.0.0/8 127.0.0.0/8 ::/128 ::1/128', 'http_access deny loopback_destination',
   ];
   if (active.length) {
     for (const s of active) lines.push(`http_port 127.0.0.1:${s.listener} name=s${s.listener}`);
     lines.push(`acl session_listener myportname ${active.map(s => `s${s.listener}`).join(' ')}`);
-    if (config.allowedDomains.length) {
+    if (config.allowAllDomains) {
+      // Explicit operator opt-in; previous port/source/metadata denies still apply.
+      lines.push('http_access allow session_listener');
+    } else if (config.allowedDomains.length) {
       lines.push(`acl allowed_destinations dstdomain ${config.allowedDomains.join(' ')}`);
       lines.push('http_access allow session_listener allowed_destinations');
     }

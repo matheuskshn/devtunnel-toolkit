@@ -92,6 +92,12 @@ test('Squid config fails closed and logs authority only; enrichment cannot be fo
   assert.doesNotMatch(c,/%ru|%>ru|%un|credentials|http_access allow all|user-a/);
   const denied = squidConfig(parseConfig({}),sessions,'/run/hub');
   assert.doesNotMatch(denied,/http_access allow/);
+  const broad=squidConfig(parseConfig({allowAllDomains:true}),sessions,'/run/hub');
+  assert.match(broad,/http_access allow session_listener\n/);
+  for(const rule of ['deny metadata','deny loopback_destination','deny !local_client','deny !allowed_ports','deny CONNECT !connect_ports']){
+    assert.ok(broad.indexOf(`http_access ${rule}`)<broad.indexOf('http_access allow session_listener'));
+  }
+  assert.doesNotMatch(squidConfig(parseConfig({allowAllDomains:true}),[],'/run/hub'),/http_access allow/);
   const record = auditRecord('1700000000.123 18001 CONNECT service.example.com 443 200 1024 42',sessions);
   assert.equal(record.user_login,'user-a'); assert.equal(record.duration_ms,42);
   assert.equal(record.attribution,'session_listener'); assert.equal(record.destination,'service.example.com');

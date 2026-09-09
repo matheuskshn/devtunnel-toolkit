@@ -95,7 +95,8 @@ value; they are not appended. Configuration is read at startup, not hot-reloaded
 if present. An absent default file permits environment-only operation. An
 explicitly selected missing file, unknown JSON keys or malformed configuration
 stop startup. File validation is not bypassed by environment overrides.
-Without an allowed domain list, every proxy destination is denied.
+Without an allowed domain list, every proxy destination is denied, unless the
+administrator explicitly enables `HUB_ALLOW_ALL_DOMAINS=true`.
 
 | Key                                 | Default                    | Purpose                                                             |
 | ----------------------------------- | -------------------------- | ------------------------------------------------------------------- |
@@ -116,6 +117,7 @@ Without an allowed domain list, every proxy destination is denied.
 | `HUB_LISTENER_START` / `HUB_LISTENER_END` | `listenerStart` / `listenerEnd` |
 | `HUB_MAX_SESSIONS` | `maxSessions` |
 | `HUB_ALLOWED_DOMAINS` | `allowedDomains` |
+| `HUB_ALLOW_ALL_DOMAINS` | `allowAllDomains` (boolean, default `false`) |
 | `HUB_ALLOWED_PORTS` / `HUB_CONNECT_PORTS` | `allowedPorts` / `connectPorts` |
 | `HUB_ALLOWED_PROVIDERS` | `allowedProviders` |
 | `HUB_ALLOWED_MICROSOFT_TENANTS` | `allowedMicrosoftTenants` |
@@ -124,12 +126,21 @@ Without an allowed domain list, every proxy destination is denied.
 
 Lists use comma-separated values, with whitespace around items ignored, not JSON
 arrays. An unset variable preserves the file value or default; an empty variable
-sets an empty list. Empty domains deny all destinations; empty tenants remove
+sets an empty list. Empty domains deny all destinations unless all-domain access
+is explicitly enabled; empty tenants remove
 tenant restrictions. Empty provider/port lists and empty scalar values are invalid.
 Integers must use decimal digits. Values are validated with the same policy as
 JSON and errors never echo their contents. If changing `HUB_HEALTH_PORT`, update
 the deployment's HTTP probes to match. Existing state still enforces immutable
 Hub identity and listener assignments.
+
+`HUB_ALLOW_ALL_DOMAINS` accepts only `true` or `false`. When enabled, it bypasses
+the domain allowlist, including for literal IP destinations. The remaining port,
+loopback, link-local/metadata, local-source and enrolled-listener restrictions
+still apply; tunnel authentication and tenant policy do not change. This grants
+users access to all otherwise-permitted destinations reachable from the container,
+including private networks. Enable it only as a deliberate deployment policy.
+The default remains deny-by-default. `HUB_ALLOWED_DOMAINS=*` is still invalid.
 
 Copy [`.env.example`](.env.example) to an external path such as
 `/opt/devtunnel-hub/hub.env` and customize it for Docker or Compose:
@@ -166,11 +177,12 @@ the tenant allowlist in external configuration. Device flow still depends on
 the tenant's Conditional Access policy. A tenant allowlist does not bypass MFA.
 Personal Microsoft accounts are not excluded by the default generic policy.
 
-Only loopback clients and explicitly permitted destinations/ports are allowed.
+Only loopback clients and policy-permitted destinations/ports are allowed.
 Loopback destinations, link-local/metadata addresses and Squid management are
 denied first. All access rules precede a final `deny all`. Squid validates each
 candidate configuration before reload. There is no anonymous tunnel access,
-TLS inspection, forwarding of arbitrary ports or unrestricted proxy mode.
+TLS inspection or forwarding of arbitrary ports. All-domain access requires the
+explicit opt-in described above and does not create an anonymous public proxy.
 Private tunnel and port ACLs must have no explicit grants. Owners must not
 delegate access or share connection tokens; policy rechecks are periodic, not
 an instantaneous revocation guarantee.

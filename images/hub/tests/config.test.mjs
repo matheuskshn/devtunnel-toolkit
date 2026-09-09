@@ -40,9 +40,17 @@ test('all policy environment fields use the same validated configuration schema'
     HUB_HEALTH_PORT:'8081',HUB_MAINTENANCE_SECONDS:'120',HUB_RUN_DIR:'/tmp/hub',
   });
   assert.deepEqual(config, {hubId:'test-hub',listenerStart:19001,listenerEnd:19999,maxSessions:10,
-    allowedDomains:['service.example.com'],allowedPorts:[80,443,22],connectPorts:[443,22],
+    allowedDomains:['service.example.com'],allowAllDomains:false,allowedPorts:[80,443,22],connectPorts:[443,22],
     allowedProviders:['microsoft'],allowedMicrosoftTenants:['00000000-0000-0000-0000-000000000000'],
     healthPort:8081,maintenanceSeconds:120});
+});
+test('all-domain access requires an explicit boolean and supports environment override',async t=>{
+  const file=await fixture(t,'{"allowAllDomains":true}');
+  assert.equal((await loadConfig(file,{})).allowAllDomains,true);
+  assert.equal((await loadConfig(file,{HUB_ALLOW_ALL_DOMAINS:'false'})).allowAllDomains,false);
+  assert.equal((await loadConfig(await fixture(t),{HUB_ALLOW_ALL_DOMAINS:'true'})).allowAllDomains,true);
+  for(const value of ['','1','yes','TRUE','false;allow all'])await assert.rejects(loadConfig(file,{HUB_ALLOW_ALL_DOMAINS:value}),/INVALID_HUB_ALLOW_ALL_DOMAINS/);
+  await assert.rejects(loadConfig(await fixture(t,'{"allowAllDomains":"true"}'),{}),/INVALID_ALLOW_ALL_DOMAINS/);
 });
 test('empty list overrides clear lists; empty required lists and malformed values fail closed', async t => {
   const file = await fixture(t, '{"allowedDomains":["service.example.com"]}');
