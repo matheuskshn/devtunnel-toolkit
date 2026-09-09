@@ -16,6 +16,7 @@ properties:
         env:
           - {name: HUB_RUN_DIR, value: /tmp/hub}
           - {name: HUB_ID, value: devhub}
+          - {name: HUB_TUNNEL_NAME_TEMPLATE, value: "{hub_id}-{username}"}
           - {name: HUB_ALLOWED_PROVIDERS, value: microsoft}
           # Replace with the permitted tenant UUID; the placeholder allows no real tenant.
           - {name: HUB_ALLOWED_MICROSOFT_TENANTS, value: "00000000-0000-0000-0000-000000000000"}

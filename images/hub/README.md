@@ -44,7 +44,7 @@ Upstream's moving download URL will fail the build on an unreviewed CLI update.
 Run these through container exec as a trusted administrator:
 
 ```sh
-hub session add user-a --provider microsoft --tunnel-name devhub-user-a
+hub session add user-a --provider microsoft
 hub session login user-a
 hub session start user-a
 hub session status user-a
@@ -54,7 +54,8 @@ hub session logout user-a
 hub session remove user-a
 ```
 
-- `add` only reserves local state. The default name is `<hubId>-<session-id>`.
+- `add` reserves a session ID, listener and naming template locally. Without
+  `--tunnel-name`, the name stays unresolved until verified login.
 - `login` returns a device-code prompt only to that administrative terminal.
   The user completes authentication in their own browser. Provider-confirmed
   login and stable ID are required; unknown CLI identity schemas fail closed.
@@ -86,6 +87,40 @@ Two operations on one session cannot run together; one user's device login does
 not block another user's administration. CLI operations within each home are
 serialized, including credential refresh, to avoid token-cache races.
 
+### Automatic fixed names
+
+```dotenv
+HUB_ID=devhub
+HUB_TUNNEL_NAME_TEMPLATE={hub_id}-{username}
+```
+
+The default template uses the verified Microsoft login before `@`, or the verified
+GitHub username, never the administrator's session alias. For example,
+`alice@example.com` produces `devhub-alice`. The service supplies the cluster
+suffix, such as `.use1`; it is not part of the template. Client port remains 3140.
+
+Only `{hub_id}` and `{username}` are supported, and `{username}` is required.
+Usernames are lowercased, runs of characters other than ASCII letters, digits and
+hyphens become a hyphen, repeated hyphens collapse, and edge hyphens are removed.
+Empty usernames or final names outside the 3-49 character naming rules fail;
+names are never silently truncated. Collisions after normalization, including
+different providers or tenants, fail with `SESSION_OR_NAME_RESERVED`. Choose an
+explicit unique name for a new session using `--tunnel-name` to resolve a conflict.
+Service-side conflicts still fail without adopting an existing tunnel.
+
+The template is captured at `add`, resolved after verified login, and the name is
+persisted before remote creation. Both filesystem and PostgreSQL preserve pending
+templates and resolved names. Configuration changes affect only newly added
+sessions. Existing names, including those created by older Hub versions or with
+`--tunnel-name`, remain unchanged across restarts and login-name changes. No
+automatic rename or remote migration is performed. Use a stable `HUB_ID` per
+deployment, not a replica hostname, and do not include `.use1` in the template.
+
+Usernames become part of the tunnel identifier. Use a manual non-identifying name
+when this is undesirable; authenticated identity is still used for audit.
+Before upgrading, back up state. Older Hub versions cannot read unresolved
+sessions from this version; rollback requires a compatible state backup.
+
 ## Configuration and policy
 
 All configuration fields also accept environment variables. Precedence is
@@ -101,6 +136,7 @@ administrator explicitly enables `HUB_ALLOW_ALL_DOMAINS=true`.
 | Key                                 | Default                    | Purpose                                                             |
 | ----------------------------------- | -------------------------- | ------------------------------------------------------------------- |
 | `hubId`                           | `devhub`                 | Prefix for default fixed names; immutable for existing state        |
+| `tunnelNameTemplate` | `{hub_id}-{username}` | Captured for new sessions; resolved once after verified login |
 | `listenerStart` / `listenerEnd` | `18001` / `18999`      | Reserved internal listener pool                                     |
 | `maxSessions`                     | `50`                     | Maximum non-removed sessions                                        |
 | `allowedDomains`                  | `[]`                     | Exact DNS names, or`.example.com` for a domain and its subdomains |
@@ -114,6 +150,7 @@ administrator explicitly enables `HUB_ALLOW_ALL_DOMAINS=true`.
 | Environment variable | JSON key |
 | --- | --- |
 | `HUB_ID` | `hubId` |
+| `HUB_TUNNEL_NAME_TEMPLATE` | `tunnelNameTemplate` |
 | `HUB_LISTENER_START` / `HUB_LISTENER_END` | `listenerStart` / `listenerEnd` |
 | `HUB_MAX_SESSIONS` | `maxSessions` |
 | `HUB_ALLOWED_DOMAINS` | `allowedDomains` |

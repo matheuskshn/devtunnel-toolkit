@@ -3,6 +3,7 @@ import { check, HubError, parseConfig, type Config } from './model.js';
 
 const fields = {
   HUB_ID: ['hubId', 'string'],
+  HUB_TUNNEL_NAME_TEMPLATE: ['tunnelNameTemplate', 'string'],
   HUB_LISTENER_START: ['listenerStart', 'number'],
   HUB_LISTENER_END: ['listenerEnd', 'number'],
   HUB_MAX_SESSIONS: ['maxSessions', 'number'],

@@ -16,6 +16,7 @@ properties:
         env:
           - {name: HUB_RUN_DIR, value: /tmp/hub}
           - {name: HUB_ID, value: devhub}
+          - {name: HUB_TUNNEL_NAME_TEMPLATE, value: "{hub_id}-{username}"}
           - {name: HUB_STORAGE_BACKEND, value: postgres}
           - {name: HUB_PG_HOST, value: postgres.example.com}
           - {name: HUB_PG_PORT, value: "5432"}

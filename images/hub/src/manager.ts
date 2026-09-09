@@ -137,10 +137,12 @@ export class Manager {
     return runtime;
   }
   private async provision(s: Session, runtime: SessionRuntime): Promise<void> {
+    const name = s.tunnel_name;
+    check(name, 'TUNNEL_NAME_UNRESOLVED');
     const create = async () => {
       // create is explicit and named, never silently adopt another account's tunnel.
       // CLI create accepts a name, not a name.cluster for a deleted resource.
-      const created = parseJson(await runtime.cli(['create', s.tunnel_name, '--expiration', '2d', '--json']));
+      const created = parseJson(await runtime.cli(['create', name, '--expiration', '2d', '--json']));
       const id = canonicalTunnel(created);
       check(id.split('.')[0] === s.tunnel_name, 'TUNNEL_NAME_CHANGED');
       if (s.tunnel_id && id !== s.tunnel_id) {
@@ -174,6 +176,8 @@ export class Manager {
     // Never mutate a remote tunnel until the cached identity is checked.
     const identity = await runtime.identity();
     check(identity.user_id === s.identity.user_id && identity.provider === s.provider, 'IDENTITY_CHANGED');
+    this.store.resolveName(s);
+    await this.store.save();
     await this.provision(s, runtime);
     await runtime.credentials();
     await this.configureSquid();
@@ -262,7 +266,10 @@ export class Manager {
         } else if (operation === 'login') {
           s.desired = false; await this.stopWorker(s);
           const runtime = await this.runtime(s);
-          await runtime.login(output); s.status = 'ready'; delete s.error;
+          await runtime.login(output);
+          this.store.resolveName(s);
+          s.status = 'ready'; delete s.error;
+          await this.store.save();
           await this.configureSquid();
         } else if (operation === 'logout' || operation === 'remove') {
           s.desired = false; await this.stopWorker(s);

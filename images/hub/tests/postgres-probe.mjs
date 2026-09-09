@@ -18,6 +18,7 @@ try {
   let p=await open(),store=new StateStore(p.directory,parseConfig({hubId:'testhub'}),p);await store.load();
   const a=store.add('user-a','microsoft'),b=store.add('user-b','microsoft');
   a.identity={provider:'microsoft',user_id:'microsoft:object-a',user_login:'user-a@example.com'};
+  store.resolveName(a);
   a.desired=true;a.status='ready';a.tunnel_id='testhub-user-a.use1';await store.save();
   let ra=await runtime(p,a),rb=await runtime(p,b);
   await secret(ra,'store','synthetic-a');await secret(rb,'store','synthetic-b');
@@ -31,6 +32,11 @@ try {
   await assert.rejects(readdir(old));
   p=await open();assert.notEqual(p.directory,old);store=new StateStore(p.directory,parseConfig({hubId:'testhub'}),p);await store.load();
   assert.equal(store.get('user-a').listener,18001);assert.equal(store.get('user-a').tunnel_id,'testhub-user-a.use1');
+  assert.equal(store.get('user-a').tunnel_name,'testhub-user-a');
+  assert.equal(store.get('user-b').tunnel_name,undefined);
+  assert.equal(store.get('user-b').tunnel_name_template,'{hub_id}-{username}');
+  store.get('user-a').identity.user_login='renamed@example.com';store.resolveName(store.get('user-a'));
+  assert.equal(store.get('user-a').tunnel_name,'testhub-user-a');await store.save();
   ra=await runtime(p,store.get('user-a'));rb=await runtime(p,store.get('user-b'));
   assert.equal((await secret(ra,'lookup')).trim(),'synthetic-a');assert.equal((await secret(rb,'lookup')).trim(),'synthetic-b');
   // A partial/failed operation still checkpoints a coherent resulting cache.

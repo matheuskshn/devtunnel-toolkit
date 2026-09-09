@@ -2,13 +2,14 @@ export type Provider = 'microsoft' | 'github';
 export type Status = 'login_required' | 'ready' | 'starting' | 'running' | 'stopped' | 'reauth_required' | 'error' | 'removed';
 export interface Identity { provider: Provider; user_id: string; user_login: string; tenant_id?: string }
 export interface Session {
-  id: string; provider: Provider; tunnel_name: string; tunnel_id?: string;
+  id: string; provider: Provider; tunnel_name?: string; tunnel_id?: string;
+  tunnel_name_template?: string;
   listener: number; identity?: Identity; desired: boolean; status: Status;
   error?: string; created_at: string;
 }
 export interface State { version: 1; hub_id: string; next_listener: number; sessions: Session[] }
 export interface Config {
-  hubId: string; listenerStart: number; listenerEnd: number; maxSessions: number;
+  hubId: string; tunnelNameTemplate: string; listenerStart: number; listenerEnd: number; maxSessions: number;
   allowedDomains: string[]; allowAllDomains: boolean; allowedPorts: number[]; connectPorts: number[];
   healthPort: number; maintenanceSeconds: number;
   allowedProviders: Provider[]; allowedMicrosoftTenants: string[];
@@ -22,17 +23,31 @@ export function check(condition: unknown, code: string): asserts condition {
 export const validId = (s: unknown): s is string => typeof s === 'string' && /^[a-z][a-z0-9-]{1,30}[a-z0-9]$/.test(s);
 export const validTunnelName = (s: unknown): s is string => typeof s === 'string' && /^[a-z][a-z0-9-]{1,47}[a-z0-9]$/.test(s);
 export const validCanonicalId = (s: unknown): s is string => typeof s === 'string' && /^[a-z0-9][a-z0-9-]{1,48}\.[a-z0-9]{3,12}$/.test(s);
+export function validNameTemplate(value: unknown): value is string {
+  return typeof value === 'string' && value.length <= 200 && value.includes('{username}') &&
+    validTunnelName(value.replaceAll('{hub_id}', 'hub').replaceAll('{username}', 'user'));
+}
+export function resolveTunnelName(template: string, hubId: string, identity: Identity): string {
+  check(validNameTemplate(template), 'INVALID_TUNNEL_NAME_TEMPLATE');
+  const login = identity.provider === 'microsoft' ? identity.user_login.split('@')[0] : identity.user_login;
+  const username = login.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  check(username.length > 0, 'INVALID_TUNNEL_USERNAME');
+  const name = template.replaceAll('{hub_id}', hubId).replaceAll('{username}', username);
+  check(validTunnelName(name), 'INVALID_TUNNEL_NAME');
+  return name;
+}
 export function errorCode(e: unknown): string { return e instanceof HubError ? e.code : 'INTERNAL_ERROR'; }
 export function parseConfig(value: unknown): Config {
   check(value && typeof value === 'object' && !Array.isArray(value), 'INVALID_CONFIG');
   const input = value as Record<string, unknown>;
-  const defaults: Config = { hubId: 'devhub', listenerStart: 18001, listenerEnd: 18999,
+  const defaults: Config = { hubId: 'devhub', tunnelNameTemplate: '{hub_id}-{username}', listenerStart: 18001, listenerEnd: 18999,
     maxSessions: 50, allowedDomains: [], allowAllDomains: false, allowedPorts: [80, 443], connectPorts: [443],
     healthPort: 8080, maintenanceSeconds: 300,
     allowedProviders: ['microsoft','github'], allowedMicrosoftTenants: [] };
   check(Object.keys(input).every(k => k in defaults), 'UNKNOWN_CONFIG_KEY');
   const c = { ...defaults, ...input } as Config;
   check(validId(c.hubId), 'INVALID_HUB_ID');
+  check(validNameTemplate(c.tunnelNameTemplate), 'INVALID_TUNNEL_NAME_TEMPLATE');
   const port = (n: unknown): n is number => Number.isInteger(n) && Number(n) > 0 && Number(n) <= 65535;
   check(port(c.listenerStart) && c.listenerStart >= 1024 && port(c.listenerEnd) && c.listenerEnd >= c.listenerStart, 'INVALID_LISTENER_RANGE');
   check(!(c.listenerStart <= 3140 && c.listenerEnd >= 3140), 'RESERVED_PORT');
