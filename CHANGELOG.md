@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-rc.3](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.2...v0.1.0-rc.3) (2026-09-09)
+
+
+### Features
+
+* **hub:** add explicit all-domain access policy ([#8](https://github.com/matheuskshn/devtunnel-toolkit/issues/8)) ([c6e45ad](https://github.com/matheuskshn/devtunnel-toolkit/commit/c6e45adc5f3dbf29b455bc869410eacf31b23fe8))
+
 ## [0.1.0-rc.2](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.1...v0.1.0-rc.2) (2026-09-09)
 
 
