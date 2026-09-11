@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM debian:bookworm-slim
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
 
 LABEL org.opencontainers.image.title="devtunnel-toolkit-route-proxy" \
       org.opencontainers.image.description="Selective local route proxy for DevTunnel Toolkit clients" \
@@ -9,6 +9,7 @@ LABEL org.opencontainers.image.title="devtunnel-toolkit-route-proxy" \
       org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
         tini \
         tinyproxy-bin \

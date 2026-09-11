@@ -5,6 +5,40 @@ import {parse,parseAllDocuments} from 'yaml';
 import {loadConfig} from '../dist/config.js';
 const read=async relative=>readFile(new URL(relative,import.meta.url),'utf8');
 
+test('Ubuntu acceptance uses native runners and cannot publish or bypass failed tests',async()=>{
+  const source=await read('../../../.github/workflows/hub-ubuntu-acceptance.yml');
+  const workflow=parse(source);
+  assert.deepEqual(Object.keys(workflow.on),['workflow_dispatch','pull_request']);
+  assert.ok(workflow.on.pull_request.paths.includes('images/hub/Dockerfile.ubuntu'));
+  assert.ok(workflow.on.pull_request.paths.includes('images/hub/src/**'));
+  assert.ok(workflow.on.pull_request.paths.every(p=>!p.endsWith('.md') && p!=='images/hub/**'));
+  assert.deepEqual(workflow.permissions,{contents:'read'});
+  assert.equal(workflow.defaults.run.shell,'bash');
+  const job=workflow.jobs.native;
+  assert.ok(Object.values(job.env).every(value=>!String(value).includes('runner.')));
+  assert.equal(job.strategy['fail-fast'],false);
+  assert.deepEqual(job.strategy.matrix.include,[
+    {runner:'ubuntu-24.04',arch:'amd64',machine:'x86_64'},
+    {runner:'ubuntu-24.04-arm',arch:'arm64',machine:'aarch64'},
+  ]);
+  assert.equal(job['runs-on'],'${{ matrix.runner }}');
+  assert.ok(job.steps.some(s=>s.run?.includes('test "$(uname -m)" = "$EXPECTED_MACHINE"')));
+  assert.ok(job.steps.some(s=>s.run?.includes('npm run test:container')));
+  assert.ok(job.steps.some(s=>s.run?.includes('npm run test:postgres')));
+  assert.ok(job.steps.some(s=>s.run?.includes('native-package-audit.mjs')));
+  assert.ok(job.steps.some(s=>s.run?.includes('cc -O2 -Wall -Wextra /tests/native-library-regression.c')));
+  assert.ok(job.steps.some(s=>s.run?.includes('cc -O2 -Wall -Wextra /tests/elf-string-regression.c')));
+  assert.ok(job.steps.some(s=>s.run?.includes("-ec '/probes/native-library-regression && /probes/elf-string-regression'")));
+  assert.ok(job.steps.some(s=>s.run?.includes('--severity HIGH,CRITICAL --exit-code 1')));
+  assert.doesNotMatch(source,/setup-qemu|push:\s*true|docker push|login-action|secrets\.|continue-on-error|ignore-unfixed|detect_leaks=0|docker\.sock/);
+  for (const step of job.steps.filter(s=>s.uses)) assert.match(step.uses,/@[a-f0-9]{40}$/);
+  const artifact=job.steps.find(s=>s.uses?.startsWith('actions/upload-artifact@'));
+  assert.equal(artifact.if,'always()');
+  assert.equal(artifact.with['retention-days'],7);
+  assert.match(artifact.with.path,/reports\/\*\.json/);
+  assert.doesNotMatch(artifact.with.path,/\.tar|\.env|\/data/);
+});
+
 test('Kubernetes example has one non-root replica, persistent data and no ingress',async()=>{
   const documents=parseAllDocuments(await read('../examples/kubernetes/hub.yaml'));
   for(const document of documents)assert.deepEqual(document.errors,[]);
@@ -65,7 +99,7 @@ test('Hub publishing requires tests and both architectures; PR validation has no
   assert.deepEqual(architectures.needs,['changes','test']);
   assert.equal(architectures.if,"needs.changes.outputs.hub == 'true'");
   assert.equal(workflow.jobs.changes.uses,'./.github/workflows/image-changes.yml');
-  assert.deepEqual(publish.needs,['test','architectures']);
+  assert.deepEqual(publish.needs,['test','architectures','security']);
   assert.equal(publish.if,"(github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'");
   assert.deepEqual(publish.permissions,{contents:'read',packages:'write'});
   for(const job of [tests,architectures]){
@@ -76,7 +110,9 @@ test('Hub publishing requires tests and both architectures; PR validation has no
   assert.ok(tests.steps.some(s=>s.run==='npm run test:container'));
   assert.equal(tests.steps.find(s=>s.run==='npm run test:container').if,"needs.changes.outputs.hub == 'true'");
   assert.equal(tests.steps.find(s=>s.run==='npm run test:postgres').if,"needs.changes.outputs.hub == 'true'");
-  assert.ok(tests.steps.some(s=>s.run==='npm audit --omit=dev --audit-level=high'));
+  assert.ok(tests.steps.some(s=>s.run==='npm audit --audit-level=low'));
+  assert.equal(tests.needs, 'changes');
+  assert.equal(workflow.jobs.security.uses, './.github/workflows/security.yml');
   const build=publish.steps.find(s=>s.uses?.startsWith('docker/build-push-action')).with;
   assert.equal(build.context,'images/hub');assert.equal(build.platforms,'linux/amd64,linux/arm64');
   assert.equal(build.push,true);assert.equal(build.provenance,true);assert.equal(build.sbom,true);
@@ -90,9 +126,38 @@ test('Hub publishing requires tests and both architectures; PR validation has no
 test('legacy image workflow uses a filtered matrix and skips an empty selection',async()=>{
   const workflow=parse(await read('../../../.github/workflows/docker.yml'));
   assert.equal(workflow.jobs.changes.uses,'./.github/workflows/image-changes.yml');
-  assert.equal(workflow.jobs.build.needs,'changes');
+  assert.deepEqual(workflow.jobs.build.needs,['changes','security']);
   assert.equal(workflow.jobs.build.if,"needs.changes.outputs.legacy == 'true'");
   assert.equal(workflow.jobs.build.strategy.matrix,'${{ fromJSON(needs.changes.outputs.matrix) }}');
+});
+test('security gate scans changed images and never hides unpatched high or critical findings', async () => {
+  const workflow = parse(await read('../../../.github/workflows/security.yml'));
+  assert.deepEqual(workflow.permissions, {contents: 'read'});
+  assert.equal(workflow.jobs.images.if, "needs.plan.outputs.any == 'true'");
+  const scan = workflow.jobs.images.steps.find(s => s.name?.startsWith('Block high')).run;
+  assert.match(scan, /--severity HIGH,CRITICAL/);
+  assert.match(scan, /--exit-code 1/);
+  assert.doesNotMatch(scan, /ignore-unfixed|ignorefile|exit-code 0/);
+  assert.ok(workflow.jobs.source.steps.some(s => s.run?.includes('gitleaks') && s.run.includes('--redact')));
+  for (const job of Object.values(workflow.jobs))
+    for (const step of job.steps ?? [])
+      if (step.uses) assert.match(step.uses, /@[a-f0-9]{40}$/);
+});
+test('release publishing requires the complete security workflow without suppressing functional checks', async () => {
+  const checks = parse(await read('../../../.github/workflows/release-checks.yml'));
+  const suite = parse(await read('../../../.github/workflows/release-suite.yml'));
+  const config = JSON.parse(await read('../../../release-please-config.json'));
+  assert.equal(checks.jobs.security.uses, './.github/workflows/security.yml');
+  assert.equal(checks.jobs.security.with.ref, '${{ inputs.ref }}');
+  assert.equal(checks.jobs.security.with['scan-images'], '${{ inputs.container }}');
+  assert.equal(checks.jobs.checks.needs, undefined);
+  assert.equal(suite.jobs.checks.uses, './.github/workflows/release-checks.yml');
+  assert.ok(suite.jobs.build.needs.includes('checks'));
+  assert.ok(suite.jobs.finalize.needs.includes('checks'));
+  assert.ok(suite.jobs.finalize.needs.includes('build'));
+  assert.equal(suite.jobs.build['continue-on-error'], undefined);
+  assert.equal(suite.jobs.finalize['continue-on-error'], undefined);
+  assert.equal(config.packages['.'].draft, true);
 });
 test('Hub build context is source-only',async()=>{
   const ignore=await read('../.dockerignore');

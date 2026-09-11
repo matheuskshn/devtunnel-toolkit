@@ -1,0 +1,32 @@
+#!/bin/sh
+set -eu
+export LC_ALL=C
+
+# Ubuntu documents this provider replacement. Refuse any broader removal plan
+# before allowing removal of the old Essential provider metapackage.
+# https://documentation.ubuntu.com/release-notes/26.04/summary-for-lts-users/
+plan=$(mktemp)
+trap 'rm -f "$plan"' EXIT HUP INT TERM
+apt-get --simulate install --no-install-recommends \
+  coreutils-from-gnu coreutils-from-uutils- rust-coreutils- > "$plan"
+awk '
+  $1 == "Remv" || $1 == "Purg" {
+    if ($2 != "coreutils-from-uutils" && $2 != "rust-coreutils") exit 1
+    removed[$2]++
+  }
+  END {
+    if (removed["coreutils-from-uutils"] != 1 || removed["rust-coreutils"] != 1) exit 1
+  }
+' "$plan"
+apt-get install -y --no-install-recommends --allow-remove-essential \
+  coreutils-from-gnu coreutils-from-uutils- rust-coreutils-
+test "$(dpkg-query -W -f '${db:Status-Status}' coreutils-from-gnu)" = installed
+test "$(dpkg-query -W -f '${db:Status-Status}' gnu-coreutils)" = installed
+if dpkg-query -W -f '${db:Status-Status}' rust-coreutils 2>/dev/null | grep -qx installed; then
+  echo 'Unexpected Rust coreutils installation after provider replacement' >&2
+  exit 1
+fi
+test -z "$(dpkg --audit)"
+for utility in cp mv rm mkdir id env sort sha256sum; do
+  "$utility" --version | head -n 1 | grep -F '(GNU coreutils)'
+done

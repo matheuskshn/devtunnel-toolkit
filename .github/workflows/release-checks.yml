@@ -11,15 +11,20 @@ on:
 permissions:
   contents: read
 jobs:
+  security:
+    uses: ./.github/workflows/security.yml
+    with:
+      ref: ${{ inputs.ref }}
+      scan-images: ${{ inputs.container }}
   checks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: images/hub/package-lock.json
       - run: node .github/scripts/release-policy.mjs
@@ -27,7 +32,7 @@ jobs:
       - run: bash -n docker/devtunnel-entrypoint images/squid/squid-entrypoint images/tinyproxy/tinyproxy-entrypoint images/openvpn/openvpn-entrypoint
       - run: npm ci --ignore-scripts
         working-directory: images/hub
-      - run: npm test && npm run check:public && npm audit --omit=dev --audit-level=high
+      - run: npm run test:coverage && npm run check:public && npm audit --audit-level=low
         working-directory: images/hub
       - if: inputs.container
         run: docker build -t devtunnel-toolkit-hub:local images/hub

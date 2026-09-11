@@ -13,14 +13,16 @@ User B: localhost:3140 -> private tunnel B:3140 -> SDK worker B -> 127.0.0.1:180
 ```
 
 The server performs port mapping. Clients use the standard `devtunnel connect`
-command and always get local port `3140`. Each session has its own Microsoft or
+command and get the configured proxy port (`3140` by default). Each session has its own Microsoft or
 GitHub login, persistent home, keyring, D-Bus session and SDK worker. The manager
 allocates one immutable Squid listener per session and supervises workers.
 
 This is logical isolation for trusted software processes, not a sandbox for
 hostile tenants: they share a Linux UID, kernel, Squid and a trusted administrator.
 Users never receive shell, container-exec, manager-socket or storage access.
-The administration interface is a mode-0600 Unix socket, not a public web API.
+The CLI uses a mode-0600 Unix socket. An optional authenticated
+[web console](WEB.md) provides session management, logs, policy and user/provider
+administration in the same container. It is disabled by default.
 
 ## Quick start
 
@@ -32,7 +34,7 @@ Supply configuration through environment variables or create a JSON file
 docker build -t devtunnel-toolkit-hub:local images/hub
 ```
 
-The image retains the `debian:bookworm-slim` base and bundles Node 22, Squid,
+The image uses a digest-pinned Debian 13 (Trixie) slim base and bundles Node 24 LTS, Squid,
 Dev Tunnels CLI, D-Bus, GNOME Keyring, certificates and tini at build time. It runs
 as UID/GID 1000, without privileged mode, extra capabilities, Docker socket,
 host networking or a VPN device. No packages are installed at startup.
@@ -56,11 +58,12 @@ hub session remove user-a
 
 - `add` reserves a session ID, listener and naming template locally. Without
   `--tunnel-name`, the name stays unresolved until verified login.
-- `login` returns a device-code prompt only to that administrative terminal.
+- `login` returns a device-code prompt only to that administrative terminal
+  (or the initiating authenticated console user when started through the UI).
   The user completes authentication in their own browser. Provider-confirmed
   login and stable ID are required; unknown CLI identity schemas fail closed.
 - `start` validates the cached identity, creates the explicitly named remote
-  tunnel on first use, ensures port 3140, rejects shared ACLs, and starts a worker.
+  tunnel on first use, ensures the configured proxy port, rejects shared ACLs, and starts a worker.
   Subsequent starts reuse the persisted canonical ID, including its cluster.
 - `stop` closes the worker and disables automatic restart for that session.
 - `logout` also clears the CLI login; the identity binding is retained so another
@@ -97,7 +100,7 @@ HUB_TUNNEL_NAME_TEMPLATE={hub_id}-{username}
 The default template uses the verified Microsoft login before `@`, or the verified
 GitHub username, never the administrator's session alias. For example,
 `alice@example.com` produces `devhub-alice`. The service supplies the cluster
-suffix, such as `.use1`; it is not part of the template. Client port remains 3140.
+suffix, such as `.use1`; it is not part of the template. The client port is configured separately.
 
 Only `{hub_id}` and `{username}` are supported, and `{username}` is required.
 Usernames are lowercased, runs of characters other than ASCII letters, digits and
@@ -123,9 +126,82 @@ sessions from this version; rollback requires a compatible state backup.
 
 ## Configuration and policy
 
+### Published proxy port
+
+Set `HUB_PROXY_PORT=3210` (JSON: `proxyPort`) to change the default `3140`.
+Administrators can also use **Configurações > Editar política > Porta do proxy**.
+The port is global to the Hub, with one private tunnel per user. It must be an
+integer from 1024 to 65535 and cannot overlap the Squid listener range, health
+port or web console port. Destination allowlists (`allowedPorts`/`connectPorts`)
+are separate and do not need to include the published proxy port.
+
+Stop all sessions before saving in the UI. Saving changes the desired policy;
+each tunnel is migrated when its session is next started. The Hub checks the
+account, tunnel ID and owner-only ACLs before replacing only its previously known
+port, then verifies the result before starting a worker. Unknown/additional
+ports or shared permissions are never silently removed. Interrupted migrations
+can be retried from known subsets of the previously recorded and desired ports. Existing
+names, credentials and per-session audit listeners remain unchanged. The UI
+shows the last recorded mapping and the pending port until the next start.
+
+Reconnect the local Dev Tunnel client after changing the port and update your
+application's proxy URL, for example `http://127.0.0.1:3210`. The client port must
+be available locally; another client process is not reconfigured automatically.
+Do not expose a new Squid port in Docker/ACA ingress: the private relay still
+maps to the isolated loopback listeners inside the container.
+
+Existing sessions without a recorded port are treated as using the legacy
+default 3140. The recorded port persists with session state in either storage
+backend. Saved UI policy overrides its matching environment value while the
+console is enabled. Older images only understand 3140; migrate back before
+downgrading or restore a compatible state/resource backup.
+
+### Optional SOCKS5 TCP CONNECT
+
+Set `HUB_SOCKS_ENABLED=true` and optionally `HUB_SOCKS_PORT=3180` (JSON:
+`socksEnabled`, `socksPort`). The default is disabled. Administrators can enable
+it and edit its port in **Configurações > Editar política** after stopping all
+sessions. Saving policy does not start sessions or modify remote resources by
+itself; the next session start reconciles the exact owner-only port set.
+
+The same private tunnel publishes HTTP CONNECT and SOCKS on separate configurable
+ports. Each user gets a dedicated loopback SOCKS listener which forwards only to
+that user's immutable Squid listener. Both paths use Squid's destination/port
+allowlists and loopback/metadata denies, and produce the same identity-enriched
+`proxy_access` audit records. SOCKS traffic is recorded as `CONNECT`, not as a
+separate authenticated SOCKS username. The internal listeners are never exposed
+through Docker, Kubernetes or ACA ingress.
+
+Only SOCKS5 `CONNECT` is supported; SOCKS4, BIND, UDP ASSOCIATE and username/password
+authentication are rejected. Access is authenticated by the private Dev Tunnel;
+the adapter offers the SOCKS no-auth method only behind that boundary. Do not
+share the client's local listener with untrusted users or expose it publicly.
+SOCKS itself does not encrypt destination traffic: use TLS/SSH as appropriate.
+
+For clients that support proxy URLs, use `socks5h://127.0.0.1:3180` to send DNS
+names through the tunnel for resolution by Squid. `socks5://` may resolve locally
+depending on the client. Destinations must still be explicitly permitted in both
+`allowedPorts` and `connectPorts`; enabling SOCKS does not open SSH/database ports.
+
+The port must be 1024..65535 and distinct from HTTP proxy, health, console and
+internal listener ports. Each SOCKS-enabled session reserves a second internal
+listener permanently, including after disable/removal. Legacy sessions receive
+that reservation on their first SOCKS-enabled start. Allow sufficient listener
+pool capacity. Both storage backends retain these reservations and confirmed
+published ports. Downgrade requires a compatible state backup and remote port
+policy, not just disabling the feature.
+
+Each adapter caps active connections, handshake size/time, proxy response headers
+and idle duration. TCP streaming uses backpressure; no payload, credential or
+full URL is added to audit logs. Worker shutdown closes both protocols.
+
+### Configuration sources
+
 All configuration fields also accept environment variables. Precedence is
 **environment variables > JSON file > defaults**. Lists replace the entire file
 value; they are not appended. Configuration is read at startup, not hot-reloaded.
+When the optional web console is enabled, an explicitly saved web policy takes
+precedence for its saved fields. See [web policy and persistence](WEB.md#policy-and-persistence).
 `HUB_CONFIG` selects an optional JSON file; otherwise `/config/hub.json` is read
 if present. An absent default file permits environment-only operation. An
 explicitly selected missing file, unknown JSON keys or malformed configuration
@@ -137,6 +213,9 @@ administrator explicitly enables `HUB_ALLOW_ALL_DOMAINS=true`.
 | ----------------------------------- | -------------------------- | ------------------------------------------------------------------- |
 | `hubId`                           | `devhub`                 | Prefix for default fixed names; immutable for existing state        |
 | `tunnelNameTemplate` | `{hub_id}-{username}` | Captured for new sessions; resolved once after verified login |
+| `proxyPort` | `3140` | Published tunnel/client port; global, distinct from internal listeners |
+| `socksEnabled` | `false` | Enable SOCKS5 TCP CONNECT through the same Squid policy |
+| `socksPort` | `3180` | Published SOCKS tunnel/client port |
 | `listenerStart` / `listenerEnd` | `18001` / `18999`      | Reserved internal listener pool                                     |
 | `maxSessions`                     | `50`                     | Maximum non-removed sessions                                        |
 | `allowedDomains`                  | `[]`                     | Exact DNS names, or`.example.com` for a domain and its subdomains |
@@ -151,6 +230,9 @@ administrator explicitly enables `HUB_ALLOW_ALL_DOMAINS=true`.
 | --- | --- |
 | `HUB_ID` | `hubId` |
 | `HUB_TUNNEL_NAME_TEMPLATE` | `tunnelNameTemplate` |
+| `HUB_PROXY_PORT` | `proxyPort` |
+| `HUB_SOCKS_ENABLED` | `socksEnabled` |
+| `HUB_SOCKS_PORT` | `socksPort` |
 | `HUB_LISTENER_START` / `HUB_LISTENER_END` | `listenerStart` / `listenerEnd` |
 | `HUB_MAX_SESSIONS` | `maxSessions` |
 | `HUB_ALLOWED_DOMAINS` | `allowedDomains` |

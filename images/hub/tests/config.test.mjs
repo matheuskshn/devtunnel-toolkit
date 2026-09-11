@@ -23,7 +23,8 @@ test('public environment example is valid and contains no login credentials', as
   assert.equal(env.HUB_CONFIG,undefined);
   assert.equal(env.HUB_DATA_DIR,'/data');
   assert.equal(env.HUB_RUN_DIR,'/run/hub');
-  assert.ok(Object.keys(env).every(key => !/TOKEN|PASSWORD|SECRET/.test(key)));
+  assert.equal(env.HUB_WEB_REQUIRE_PASSWORD_CHANGE, 'true');
+  assert.ok(Object.keys(env).every(key => key === 'HUB_WEB_REQUIRE_PASSWORD_CHANGE' || !/TOKEN|PASSWORD|SECRET/.test(key)));
 });
 test('environment overrides file fields and preserves unmodified fields and defaults', async t => {
   const file = await fixture(t, JSON.stringify({hubId:'file-hub',maxSessions:7,allowedDomains:['old.example.com']}));
@@ -34,7 +35,7 @@ test('environment overrides file fields and preserves unmodified fields and defa
 });
 test('all policy environment fields use the same validated configuration schema', async t => {
   const config = await loadConfig(await fixture(t), {
-    HUB_ID:'test-hub',HUB_LISTENER_START:'19001',HUB_LISTENER_END:'19999',HUB_MAX_SESSIONS:'10',
+    HUB_ID:'test-hub',HUB_PROXY_PORT:'3210',HUB_LISTENER_START:'19001',HUB_LISTENER_END:'19999',HUB_MAX_SESSIONS:'10',
     HUB_ALLOWED_DOMAINS:'service.example.com',HUB_ALLOWED_PORTS:'80, 443,22',HUB_CONNECT_PORTS:'443,22',
     HUB_ALLOWED_PROVIDERS:'microsoft',HUB_ALLOWED_MICROSOFT_TENANTS:'00000000-0000-0000-0000-000000000000',
     HUB_HEALTH_PORT:'8081',HUB_MAINTENANCE_SECONDS:'120',HUB_RUN_DIR:'/tmp/hub',
@@ -42,7 +43,7 @@ test('all policy environment fields use the same validated configuration schema'
   assert.deepEqual(config, {hubId:'test-hub',tunnelNameTemplate:'{hub_id}-{username}',listenerStart:19001,listenerEnd:19999,maxSessions:10,
     allowedDomains:['service.example.com'],allowAllDomains:false,allowedPorts:[80,443,22],connectPorts:[443,22],
     allowedProviders:['microsoft'],allowedMicrosoftTenants:['00000000-0000-0000-0000-000000000000'],
-    healthPort:8081,maintenanceSeconds:120});
+    healthPort:8081,proxyPort:3210,socksPort:3180,socksEnabled:false,maintenanceSeconds:120});
 });
 test('all-domain access requires an explicit boolean and supports environment override',async t=>{
   const file=await fixture(t,'{"allowAllDomains":true}');

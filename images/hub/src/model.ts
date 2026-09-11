@@ -1,17 +1,21 @@
 export type Provider = 'microsoft' | 'github';
+export const DEFAULT_PROXY_PORT = 3140;
+export const DEFAULT_SOCKS_PORT = 3180;
 export type Status = 'login_required' | 'ready' | 'starting' | 'running' | 'stopped' | 'reauth_required' | 'error' | 'removed';
 export interface Identity { provider: Provider; user_id: string; user_login: string; tenant_id?: string }
 export interface Session {
   id: string; provider: Provider; tunnel_name?: string; tunnel_id?: string;
   tunnel_name_template?: string;
+  proxy_port?: number;
+  socks_port?: number; socks_listener?: number;
   listener: number; identity?: Identity; desired: boolean; status: Status;
   error?: string; created_at: string;
 }
-export interface State { version: 1; hub_id: string; next_listener: number; sessions: Session[] }
+export interface State { version: 1; hub_id: string; next_listener: number; sessions: Session[]; console?: string }
 export interface Config {
   hubId: string; tunnelNameTemplate: string; listenerStart: number; listenerEnd: number; maxSessions: number;
   allowedDomains: string[]; allowAllDomains: boolean; allowedPorts: number[]; connectPorts: number[];
-  healthPort: number; maintenanceSeconds: number;
+  healthPort: number; proxyPort: number; socksPort: number; socksEnabled: boolean; maintenanceSeconds: number;
   allowedProviders: Provider[]; allowedMicrosoftTenants: string[];
 }
 export class HubError extends Error {
@@ -42,7 +46,7 @@ export function parseConfig(value: unknown): Config {
   const input = value as Record<string, unknown>;
   const defaults: Config = { hubId: 'devhub', tunnelNameTemplate: '{hub_id}-{username}', listenerStart: 18001, listenerEnd: 18999,
     maxSessions: 50, allowedDomains: [], allowAllDomains: false, allowedPorts: [80, 443], connectPorts: [443],
-    healthPort: 8080, maintenanceSeconds: 300,
+    healthPort: 8080, proxyPort: DEFAULT_PROXY_PORT, socksPort: DEFAULT_SOCKS_PORT, socksEnabled: false, maintenanceSeconds: 300,
     allowedProviders: ['microsoft','github'], allowedMicrosoftTenants: [] };
   check(Object.keys(input).every(k => k in defaults), 'UNKNOWN_CONFIG_KEY');
   const c = { ...defaults, ...input } as Config;
@@ -50,8 +54,12 @@ export function parseConfig(value: unknown): Config {
   check(validNameTemplate(c.tunnelNameTemplate), 'INVALID_TUNNEL_NAME_TEMPLATE');
   const port = (n: unknown): n is number => Number.isInteger(n) && Number(n) > 0 && Number(n) <= 65535;
   check(port(c.listenerStart) && c.listenerStart >= 1024 && port(c.listenerEnd) && c.listenerEnd >= c.listenerStart, 'INVALID_LISTENER_RANGE');
-  check(!(c.listenerStart <= 3140 && c.listenerEnd >= 3140), 'RESERVED_PORT');
-  check(port(c.healthPort) && c.healthPort >= 1024 && c.healthPort !== 3140 && !(c.healthPort >= c.listenerStart && c.healthPort <= c.listenerEnd), 'INVALID_HEALTH_PORT');
+  check(port(c.proxyPort) && c.proxyPort >= 1024, 'INVALID_PROXY_PORT');
+  check(typeof c.socksEnabled === 'boolean', 'INVALID_SOCKS_ENABLED');
+  check(port(c.socksPort) && c.socksPort >= 1024 && c.socksPort !== c.proxyPort, 'INVALID_SOCKS_PORT');
+  check(!(c.listenerStart <= c.socksPort && c.listenerEnd >= c.socksPort), 'RESERVED_PORT');
+  check(!(c.listenerStart <= c.proxyPort && c.listenerEnd >= c.proxyPort), 'RESERVED_PORT');
+  check(port(c.healthPort) && c.healthPort >= 1024 && c.healthPort !== c.proxyPort && c.healthPort !== c.socksPort && !(c.healthPort >= c.listenerStart && c.healthPort <= c.listenerEnd), 'INVALID_HEALTH_PORT');
   check(Number.isInteger(c.maxSessions) && c.maxSessions >= 1 && c.maxSessions <= 500, 'INVALID_SESSION_LIMIT');
   check(Number.isInteger(c.maintenanceSeconds) && c.maintenanceSeconds >= 60 && c.maintenanceSeconds <= 3600, 'INVALID_MAINTENANCE_INTERVAL');
   check(Array.isArray(c.allowedProviders) && c.allowedProviders.length > 0 && c.allowedProviders.every(p => ['microsoft','github'].includes(p)), 'INVALID_PROVIDERS');

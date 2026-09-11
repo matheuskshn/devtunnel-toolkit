@@ -14,7 +14,7 @@ It packages three server-side services and one optional client-side helper:
 | ----------- | --------------------------------- | ---------------------------------------------------------------------------------- |
 | DevTunnel   | `devtunnel-toolkit`             | Hosts or connects Microsoft Dev Tunnels                                            |
 | Squid       | `devtunnel-toolkit-squid`       | HTTP/HTTPS proxy for local network access                                          |
-| OpenVPN     | `devtunnel-toolkit-openvpn`     | Privileged TCP VPN server for routed local network access                          |
+| OpenVPN     | `devtunnel-toolkit-openvpn`     | TCP VPN server with isolated networking and scoped Linux capabilities              |
 | Route proxy | `devtunnel-toolkit-route-proxy` | Selectively sends configured destinations through a locally connected tunnel proxy |
 
 ## Why
@@ -148,6 +148,14 @@ Generate an OpenVPN client profile:
 ```bash
 docker compose run --rm openvpn client > devtunnel-toolkit.ovpn
 ```
+
+OpenVPN runs on a private Docker bridge. Compose publishes its port on host
+loopback so the host-networked Dev Tunnels client can still reach it. The VPN
+container no longer shares the host network or uses `privileged: true`.
+Services bound only to host loopback and routes available only in the host
+namespace may require explicit, narrowly scoped networking changes. Validate
+your intended destinations after migrating; the bridge is not equivalent to
+host networking. Do not restore broad privileges to work around routing.
 
 Stop the toolkit:
 
@@ -459,7 +467,7 @@ strings, credentials, or ports in `ROUTE_PROXY_HOSTS`.
 | Variable                  | Default               | Description                                            |
 | ------------------------- | --------------------- | ------------------------------------------------------ |
 | `OVPN_PORT`             | `53194`             | OpenVPN listen port inside the container               |
-| `OVPN_LISTEN_ADDRESS`   | `127.0.0.1`         | OpenVPN listen address                                 |
+| `OVPN_LISTEN_ADDRESS`   | `127.0.0.1`         | Host publication address in Compose; direct image runs use it as the daemon bind address |
 | `OVPN_PROTO`            | `tcp`               | `tcp` or `udp`; TCP is recommended for Dev Tunnels |
 | `OVPN_NETWORK`          | `10.8.0.0`          | VPN subnet network                                     |
 | `OVPN_NETMASK`          | `255.255.255.0`     | VPN subnet mask                                        |
@@ -471,6 +479,11 @@ strings, credentials, or ports in `ROUTE_PROXY_HOSTS`.
 | `OVPN_DNS`              | empty                 | Comma-separated DNS servers pushed to clients          |
 | `OVPN_REDIRECT_GATEWAY` | `false`             | Push default route when true                           |
 | `OVPN_EXTRA_CONFIG`     | empty                 | Extra raw OpenVPN server configuration                 |
+
+Compose binds the daemon to `0.0.0.0` **inside its isolated namespace** and
+publishes only the configured host address. Direct Docker runs must configure
+their own port publication and namespace-local `net.ipv4.ip_forward=1`.
+The entrypoint checks forwarding instead of modifying a host sysctl.
 
 ## Published images
 
@@ -510,7 +523,10 @@ recovery and the distinction between image publication and deployment acceptance
 - The selective route list controls forwarding only. It is not a firewall or an
   authorization policy.
 - `ALLOW_ANONYMOUS=true` can expose your proxy/VPN to anyone with the tunnel URL or connection details.
-- OpenVPN runs as a privileged container because it needs `/dev/net/tun`, IP forwarding, and NAT rules.
+- OpenVPN starts as root with only `NET_ADMIN`, `SETUID` and `SETGID` capabilities
+  to configure TUN/NAT, then runs as `nobody` retaining `NET_ADMIN` for its network
+  interface operations. Compose drops other capabilities and enables
+  `no-new-privileges`; this is not a fully unprivileged/rootless service.
 - Treat generated `.ovpn` files, tunnel URLs, and access tokens as secrets.
 - Review pushed VPN routes before starting the service in sensitive networks.
 

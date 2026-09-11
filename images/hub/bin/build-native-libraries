@@ -1,0 +1,87 @@
+#!/bin/sh
+# Build only in an isolated Ubuntu build stage, never in the running Hub.
+set -eu
+# Dockerfile.ubuntu orchestrates the phases plus mandatory MIME/SONAME patches.
+# Reject an incomplete standalone sequence before touching the filesystem.
+case "${1:-}" in
+  sources|expat|glib|p11kit|package) ;;
+  *) echo 'Usage: build-native-libraries sources|expat|glib|p11kit|package; use Dockerfile.ubuntu for the complete build' >&2; exit 64 ;;
+esac
+export LC_ALL=C SOURCE_DATE_EPOCH=1788134400 DEB_BUILD_MAINT_OPTIONS=hardening=+all
+triplet=$(dpkg-architecture -qDEB_HOST_MULTIARCH)
+export CFLAGS="$(dpkg-buildflags --get CFLAGS)" CPPFLAGS="$(dpkg-buildflags --get CPPFLAGS)"
+export CXXFLAGS="$(dpkg-buildflags --get CXXFLAGS)" LDFLAGS="$(dpkg-buildflags --get LDFLAGS)"
+mkdir -p /native/sources /native/stage /native/debs /native/evidence
+cd /native/sources
+fetch() {
+  curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 180 \
+    --proto '=https' --tlsv1.2 "$1" -o "$2"
+  printf '%s  %s\n' "$3" "$2" | sha256sum -c -
+}
+sources() {
+fetch https://github.com/libexpat/libexpat/releases/download/R_2_8_4/expat-2.8.4.tar.xz \
+  expat-2.8.4.tar.xz 656ae1cc8da3b4ea513bb4e254f33e6243938084c0ec6239da873376b09985a7
+fetch https://download.gnome.org/sources/glib/2.88/glib-2.88.3.tar.xz \
+  glib-2.88.3.tar.xz ab24d24e698dfa1e408b7bcdb508f4aafc906185a8b8ce72fdf79bbbdc9b383b
+fetch https://gitlab.gnome.org/GNOME/glib/-/merge_requests/5156.patch \
+  glib-5156.patch 22be9cb6adb0280acaaa5f8630cb794017e3d2af1a2c1b094acc894ea482475b
+fetch https://github.com/p11-glue/p11-kit/releases/download/0.26.5/p11-kit-0.26.5.tar.xz \
+  p11-kit-0.26.5.tar.xz f2cc09111e44bf3fea58f023180b33acea90aa82d042d6fbb623fbc5ba033bb7
+sha256sum *.tar.xz *.patch > /native/evidence/source-sha256.txt
+for archive in *.tar.xz; do tar -xJf "$archive"; done
+patch --batch --forward --fuzz=0 -p1 -d glib-2.88.3 < glib-5156.patch
+}
+
+expat() {
+# Both ABI variants ship in Ubuntu's libexpat1 package. Keep both.
+for variant in char ushort; do
+  tests=ON
+  if test "$variant" = ushort; then tests=OFF; fi
+  cmake -S expat-2.8.4 -B "/native/expat-$variant" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_INSTALL_LIBDIR="lib/$triplet" \
+    -DEXPAT_CHAR_TYPE="$variant" -DEXPAT_BUILD_TESTS="$tests" \
+    -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_DOCS=OFF
+  cmake --build "/native/expat-$variant" --parallel 4
+  if test "$tests" = ON; then
+    ctest --test-dir "/native/expat-$variant" --output-on-failure
+  fi
+  DESTDIR=/native/stage cmake --install "/native/expat-$variant"
+done
+}
+
+glib() {
+meson setup /native/glib glib-2.88.3 --prefix=/usr --libdir="lib/$triplet" \
+  --buildtype=debugoptimized --wrap-mode=nodownload -Dtests=true -Dinstalled_tests=false \
+  -Dintrospection=disabled -Ddocumentation=false -Dman-pages=disabled \
+  -Dselinux=enabled -Dlibmount=enabled -Dlibelf=disabled -Dmultiarch=true
+meson compile -C /native/glib -j 4
+meson test -C /native/glib --no-rebuild --print-errorlogs --num-processes 4 \
+  gvariant gdatetime regex io-channel io-channel-basic keyfile gdbus-auth gdbus-auth-mechanism-sha1 gdbus-introspection
+DESTDIR=/native/stage meson install -C /native/glib --no-rebuild
+}
+
+p11kit() {
+meson setup /native/p11-kit p11-kit-0.26.5 --prefix=/usr --libdir="lib/$triplet" \
+  --buildtype=debugoptimized --wrap-mode=nodownload -Dgtk_doc=false -Dman=false \
+  -Dtrust_module=enabled -Dlibffi=enabled -Dsystemd=enabled \
+  -Dtrust_paths=/etc/ssl/certs/ca-certificates.crt
+meson compile -C /native/p11-kit -j 4
+meson test -C /native/p11-kit --no-rebuild --print-errorlogs --num-processes 4
+DESTDIR=/native/stage meson install -C /native/p11-kit --no-rebuild
+}
+
+package() {
+node /build-tools/package-native-libraries.mjs
+cp /native/glib/meson-logs/testlog.json /native/evidence/glib-tests.json
+cp /native/p11-kit/meson-logs/testlog.json /native/evidence/p11-kit-tests.json
+cp /native/expat-char/Testing/Temporary/LastTest.log /native/evidence/expat-tests.log
+}
+
+case "$1" in
+  sources) sources;;
+  expat) expat;;
+  glib) glib;;
+  p11kit) p11kit;;
+  package) package;;
+  *) exit 64;;
+esac

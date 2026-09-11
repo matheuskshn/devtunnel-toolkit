@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 OVPN_DIR="${OVPN_DIR:-/etc/openvpn}"
 EASYRSA_DIR="${OVPN_DIR}/easy-rsa"
@@ -26,6 +27,13 @@ is_true() {
     esac
 }
 
+validate_client_name() {
+    if [[ ! "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]]; then
+        printf 'openvpn: client name must contain only letters, digits, underscore or hyphen\n' >&2
+        exit 2
+    fi
+}
+
 ensure_dirs() {
     mkdir -p "$OVPN_DIR" "$CLIENTS_DIR"
 }
@@ -37,7 +45,12 @@ ensure_pki() {
         return
     fi
 
-    rm -rf "$EASYRSA_DIR"
+    # Never replace existing or partially initialized private keys implicitly.
+    # An operator must recover or move aside a partial PKI before retrying.
+    if [[ -e "$EASYRSA_DIR" || -L "$EASYRSA_DIR" ]]; then
+        printf 'openvpn: incomplete PKI exists; recover it or move it aside before initialization\n' >&2
+        exit 2
+    fi
     make-cadir "$EASYRSA_DIR" >&2
 
     pushd "$EASYRSA_DIR" >/dev/null
@@ -116,7 +129,12 @@ render_server_config() {
 }
 
 setup_networking() {
-    sysctl -w net.ipv4.ip_forward=1 >/dev/null || true
+    # Configure forwarding through the container runtime, never by modifying
+    # the host network namespace. The bundled Compose sets this namespaced sysctl.
+    if [[ "$(</proc/sys/net/ipv4/ip_forward)" != 1 ]]; then
+        printf 'openvpn: IPv4 forwarding is disabled; start with --sysctl net.ipv4.ip_forward=1 in a private network namespace\n' >&2
+        exit 2
+    fi
 
     if iptables -t nat -C POSTROUTING -s "$OVPN_CIDR" -j MASQUERADE 2>/dev/null; then
         return
@@ -127,6 +145,7 @@ setup_networking() {
 
 ensure_client() {
     local client_name="${1:-$OVPN_CLIENT_NAME}"
+    validate_client_name "$client_name"
 
     ensure_pki
 
@@ -181,6 +200,7 @@ render_client_config() {
 
 case "${1:-server}" in
     server)
+        validate_client_name "$OVPN_CLIENT_NAME"
         ensure_pki
         ensure_client "$OVPN_CLIENT_NAME"
         render_server_config

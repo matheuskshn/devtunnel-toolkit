@@ -14,7 +14,8 @@ if (args[0] === 'serve') {
   let postgres: PostgresPersistence | undefined;
   let closing = false;
   const shutdown = (failed = false) => {
-    if (closing) return; closing = true;
+    if (closing) { return; }
+    closing = true;
     if (failed) manager?.fence();
     const deadline = setTimeout(() => process.exit(1), 20000);
     void (async () => {
@@ -44,9 +45,17 @@ if (args[0] === 'serve') {
     const res = await fetch(`http://127.0.0.1:${config.healthPort}/ready`, { signal: AbortSignal.timeout(2000) });
     process.exitCode = res.ok ? 0 : 1;
   } catch { process.exitCode = 1; }
-} else if (args[0] === 'session') {
+} else if (args[0] === 'session' || args[0] === 'admin') {
+  if (args[0] === 'admin') {
+    try {
+      check(args.length===4 && args[1]==='reset-password' && args[3]==='--password-stdin', 'USAGE');
+      let password='';
+      for await (const chunk of process.stdin) { password+=chunk; check(Buffer.byteLength(password)<=4096,'PASSWORD_TOO_LONG'); }
+      args[3]=password.replace(/\r?\n$/, '');
+    } catch(e) { process.stderr.write(`${errorCode(e)}\n`); process.exit(1); }
+  }
   const socket = createConnection(`${runDir}/manager.sock`);
-  socket.once('connect', () => socket.write(JSON.stringify(args) + '\n'));
+  socket.once('connect', () => { socket.write(JSON.stringify(args) + '\n'); if(args[0]==='admin')args[3]=''; });
   socket.on('error', () => { process.stderr.write('MANAGER_UNAVAILABLE\n'); process.exitCode = 1; });
   let response = false;
   const lines = createInterface({ input: socket });
@@ -62,6 +71,7 @@ if (args[0] === 'serve') {
 } else {
   process.stdout.write('Usage: hub serve | health | session list\n' +
     '       hub session add ID [--provider microsoft|github] [--tunnel-name NAME]\n' +
-    '       hub session login|start|stop|status|logout|remove ID\n');
+    '       hub session login|start|stop|status|logout|remove ID\n' +
+    '       hub admin reset-password USERNAME --password-stdin\n');
   if (args.length && !['help','--help','-h'].includes(args[0])) process.exitCode = 1;
 }

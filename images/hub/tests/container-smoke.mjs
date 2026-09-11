@@ -56,6 +56,8 @@ try {
   assert.notEqual(unauthenticated.status,0);assert.match(unauthenticated.stderr,/AUTH_REQUIRED/);
   console.log((await exec('docker',['exec',container,'node','/tests/proxy-probe.mjs'],{timeout:30000})).stdout.trim());
   console.log((await exec('docker',['exec',container,'node','/tests/runtime-probe.mjs'],{timeout:30000})).stdout.trim());
+  if(docker(['exec',container,'test','-f','/usr/local/share/devtunnel/native/evidence/packages.json'],false).status===0)
+    console.log((await exec('docker',['exec',container,'node','/tests/ubuntu-security-probe.mjs'],{timeout:30000})).stdout.trim());
   await delay(300);
   const logs=docker(['logs',container]).stdout;
   const audits=logs.split('\n').filter(Boolean).map(l=>JSON.parse(l)).filter(l=>l.event==='proxy_access');

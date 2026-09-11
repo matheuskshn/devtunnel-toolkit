@@ -1,0 +1,119 @@
+name: Hub Ubuntu native acceptance
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - images/hub/Dockerfile.ubuntu
+      - images/hub/.dockerignore
+      - images/hub/.c8rc.json
+      - images/hub/bin/**
+      - images/hub/src/**
+      - images/hub/web/**
+      - images/hub/tests/**
+      - images/hub/package.json
+      - images/hub/package-lock.json
+      - images/hub/tsconfig.json
+      - .github/scripts/**
+      - .github/workflows/hub-ubuntu-acceptance.yml
+permissions:
+  contents: read
+defaults:
+  run:
+    shell: bash
+concurrency:
+  group: hub-ubuntu-acceptance-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  native:
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, arch: amd64, machine: x86_64}
+          - {runner: ubuntu-24.04-arm, arch: arm64, machine: aarch64}
+    env:
+      HUB_TEST_IMAGE: devtunnel-toolkit-hub:ubuntu-acceptance
+      EXPECTED_MACHINE: ${{ matrix.machine }}
+      TARGET_ARCH: ${{ matrix.arch }}
+      TRIVY_IMAGE: aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Require native execution
+        run: |
+          test "$(uname -m)" = "$EXPECTED_MACHINE"
+          reports="$RUNNER_TEMP/hub-ubuntu-reports"
+          mkdir -p "$reports"
+          echo "REPORTS=$reports" >> "$GITHUB_ENV"
+          uname -m | tee "$reports/machine.log"
+          df -h "$RUNNER_TEMP"
+      - name: Validate source
+        working-directory: images/hub
+        run: |
+          npm ci --ignore-scripts
+          npm run check:public
+          npm run test:coverage 2>&1 | tee "$REPORTS/tests.log"
+          npm audit --audit-level=low
+      - name: Build Ubuntu candidate with mandatory native regressions
+        run: |
+          docker build --platform "linux/$TARGET_ARCH" --progress=plain \
+            -f images/hub/Dockerfile.ubuntu -t "$HUB_TEST_IMAGE" images/hub \
+            2>&1 | tee "$REPORTS/build.log"
+          test "$(docker image inspect --format '{{.Architecture}}' "$HUB_TEST_IMAGE")" = "$TARGET_ARCH"
+          docker image inspect "$HUB_TEST_IMAGE" > "$REPORTS/image.json"
+      - name: Validate HTTP, SOCKS5, console and file persistence
+        working-directory: images/hub
+        run: npm run test:container 2>&1 | tee "$REPORTS/container.log"
+      - name: Validate PostgreSQL persistence and crash recovery
+        working-directory: images/hub
+        run: npm run test:postgres 2>&1 | tee "$REPORTS/postgres.log"
+      - name: Audit native packages outside the runtime image
+        run: |
+          docker build --platform "linux/$TARGET_ARCH" --target native \
+            -f images/hub/Dockerfile.ubuntu -t hub-native-audit:local images/hub
+          docker run --rm --security-opt no-new-privileges \
+            --mount "type=bind,src=$PWD/images/hub/tests/native-package-audit.mjs,dst=/audit.mjs,readonly" \
+            --mount "type=bind,src=$PWD/images/hub/tests,dst=/tests,readonly" \
+            --mount "type=bind,src=$REPORTS,dst=/reports" \
+            --env HUB_NATIVE_AUDIT_OUTPUT=/reports hub-native-audit:local \
+            sh -ec 'apt-get update && apt-get install -y --no-install-recommends lintian abigail-tools libelf-dev && node /audit.mjs && cc -O2 -Wall -Wextra /tests/native-library-regression.c -ldl -o /reports/native-library-regression && cc -O2 -Wall -Wextra /tests/elf-string-regression.c -ldl -o /reports/elf-string-regression'
+      - name: Exercise the libraries installed in the final image
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges --tmpfs /tmp:mode=1777 \
+            --mount "type=bind,src=$REPORTS,dst=/probes,readonly" \
+            --entrypoint sh "$HUB_TEST_IMAGE" \
+            -ec '/probes/native-library-regression && /probes/elf-string-regression' \
+            2>&1 | tee "$REPORTS/native-runtime.log"
+      - name: Scan the exact candidate and emit SBOM
+        run: |
+          docker save --output "$RUNNER_TEMP/hub-ubuntu-image.tar" "$HUB_TEST_IMAGE"
+          mkdir -p "$RUNNER_TEMP/hub-trivy-cache"
+          trivy() {
+            docker run --rm --user "$(id -u):$(id -g)" --read-only --cap-drop ALL \
+              --security-opt no-new-privileges --tmpfs /tmp:mode=1777 \
+              --mount "type=bind,src=$RUNNER_TEMP/hub-ubuntu-image.tar,dst=/image.tar,readonly" \
+              --mount "type=bind,src=$RUNNER_TEMP/hub-trivy-cache,dst=/cache" \
+              --mount "type=bind,src=$REPORTS,dst=/reports" \
+              "$TRIVY_IMAGE" image --cache-dir /cache --timeout 10m --input /image.tar "$@"
+          }
+          trivy --scanners vuln --format json --output /reports/trivy.json
+          trivy --skip-db-update --format cyclonedx --output /reports/sbom.cdx.json
+          trivy --skip-db-update --scanners vuln --severity HIGH,CRITICAL --exit-code 1
+      - name: Retain validation evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hub-ubuntu-${{ matrix.arch }}-${{ github.sha }}
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/hub-ubuntu-reports/*.log
+            ${{ runner.temp }}/hub-ubuntu-reports/*.json

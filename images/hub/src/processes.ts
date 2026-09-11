@@ -31,6 +31,19 @@ export async function waitFile(file: string, child: ChildProcess): Promise<void>
   }
   throw new HubError('SESSION_SERVICE_TIMEOUT');
 }
+function secretServiceOwner(reply: string): boolean | undefined {
+  let start = 0;
+  let foundFalse = false;
+  for (let index = 0; index <= reply.length; index++) {
+    if (index !== reply.length && !'\n\r\u2028\u2029'.includes(reply[index])) { continue; }
+    const line = reply.slice(start, index).trim();
+    if (line === 'boolean true') { return true; }
+    if (line === 'boolean false') { foundFalse = true; }
+    start = index + 1;
+  }
+  return foundFalse ? false : undefined;
+}
+
 export async function waitSecretService(env: NodeJS.ProcessEnv, child: ChildProcess, signal: AbortSignal,
   options: { timeout?: number; query?: typeof command } = {}): Promise<void> {
   const deadline = Date.now() + (options.timeout ?? 5000);
@@ -47,8 +60,9 @@ export async function waitSecretService(env: NodeJS.ProcessEnv, child: ChildProc
       'org.freedesktop.DBus.NameHasOwner', 'string:org.freedesktop.secrets'], env,
     { timeout: Math.max(1, Math.min(1000, deadline - Date.now())), signal });
     checkRunning();
-    if (/^\s*boolean true\s*$/m.test(reply)) return;
-    if (!/^\s*boolean false\s*$/m.test(reply)) throw new HubError('SESSION_SERVICE_INVALID_REPLY');
+    const owned = secretServiceOwner(reply);
+    if (owned === true) { return; }
+    if (owned === undefined) { throw new HubError('SESSION_SERVICE_INVALID_REPLY'); }
     await delay(Math.max(0, Math.min(50, deadline - Date.now())));
   }
   checkRunning();

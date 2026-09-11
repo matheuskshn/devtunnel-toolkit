@@ -4,13 +4,30 @@ import type { ChildProcess } from 'node:child_process';
 import type { Tunnel } from '@microsoft/dev-tunnels-contracts';
 import { TunnelManagementHttpClient, ManagementApiVersions } from '@microsoft/dev-tunnels-management';
 import { CancellationTokenSource } from '@microsoft/dev-tunnels-ssh';
-import { bindIdentity, check, HubError, type Identity, type Provider, type Session, validCanonicalId } from './model.js';
+import { bindIdentity, check, DEFAULT_PROXY_PORT, HubError, type Identity, type Provider, type Session, validCanonicalId } from './model.js';
 import { privateDirectory, type Persistence } from './state.js';
 import { cleanEnvironment, command, launch, terminate, waitFile, waitSecretService } from './processes.js';
 
+function jsonObjectStart(text: string): number {
+  let start = 0;
+  let whitespaceOnly = true;
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index];
+    if ('\n\r\u2028\u2029'.includes(character) && !whitespaceOnly) {
+      start = index + 1;
+      whitespaceOnly = true;
+    } else if (whitespaceOnly) {
+      if (character === '{') { return start; }
+      whitespaceOnly = character.trim().length === 0;
+    }
+  }
+  return -1;
+}
+
 export function parseJson(text: string): Record<string, any> {
   // The CLI prints a first-use license banner before JSON. Ignore only that prefix.
-  const start = text.search(/^\s*\{/m);
+  // Scan once: multiline whitespace regexes can retry long whitespace suffixes.
+  const start = jsonObjectStart(text);
   check(start >= 0, 'CLI_JSON_REQUIRED');
   try { return JSON.parse(text.slice(start)); } catch { throw new HubError('CLI_JSON_INVALID'); }
 }
@@ -37,15 +54,16 @@ export function canonicalTunnel(value: Record<string, any>): string {
   const canonical = id.includes('.') ? id : `${id}.${tunnel.clusterId ?? ''}`;
   check(validCanonicalId(canonical), 'TUNNEL_SCHEMA_UNSUPPORTED'); return canonical;
 }
-export function privateTunnel(value: Record<string, any>, session: Session): Tunnel {
+export function privateTunnel(value: Record<string, any>, session: Session, ports: number | readonly number[] = [session.proxy_port ?? DEFAULT_PROXY_PORT, ...(session.socks_port === undefined ? [] : [session.socks_port])]): Tunnel {
   const tunnel = value.tunnel ?? value;
   check(canonicalTunnel(value) === session.tunnel_id, 'TUNNEL_ID_CHANGED');
   // Owner permissions are implicit. Any explicit or inherited grant is rejected.
   check(tunnel.accessControl && Array.isArray(tunnel.accessControl.entries), 'ACL_SCHEMA_UNSUPPORTED');
   check(tunnel.accessControl.entries.length === 0, 'TUNNEL_NOT_OWNER_ONLY');
-  check(Array.isArray(tunnel.ports) && tunnel.ports.length === 1 && tunnel.ports[0].portNumber === 3140, 'TUNNEL_PORT_POLICY_CHANGED');
+  const expected = typeof ports === 'number' ? [ports] : ports;
+  check(new Set(expected).size === expected.length && Array.isArray(tunnel.ports) && tunnel.ports.length === expected.length && new Set(tunnel.ports.map((p: any) => p?.portNumber)).size === expected.length && tunnel.ports.every((p: any) => expected.includes(p?.portNumber)), 'TUNNEL_PORT_POLICY_CHANGED');
   for (const port of tunnel.ports) {
-    check(!port.accessControl || (Array.isArray(port.accessControl.entries) && port.accessControl.entries.length === 0), 'PORT_NOT_OWNER_ONLY');
+    check(port.accessControl === undefined || (port.accessControl !== null && typeof port.accessControl === 'object' && !Array.isArray(port.accessControl) && Array.isArray(port.accessControl.entries) && port.accessControl.entries.length === 0), 'PORT_NOT_OWNER_ONLY');
   }
   const canonical = session.tunnel_id!.split('.');
   return { ...tunnel, tunnelId: canonical[0], clusterId: canonical[1], accessTokens: undefined };

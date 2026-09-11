@@ -42,7 +42,9 @@ devtunnel user login --entra --use-device-code-auth
 devtunnel connect devhub-user-a.use1
 ```
 
-Configure the client application's HTTP proxy as `http://127.0.0.1:3140`.
+Configure the client application's HTTP proxy as `http://127.0.0.1:3140` by default.
+If the Hub's `HUB_PROXY_PORT` or saved web policy changes that port, reconnect the
+client and use the configured port in this URL instead.
 The cluster suffix above is an example, not a preset. Different users use their
 own tunnel and the same local port. Two simultaneous connections on the SAME
 client machine still cannot both bind that port.

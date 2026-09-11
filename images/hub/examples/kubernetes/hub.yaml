@@ -34,8 +34,12 @@ spec:
       labels:
         app: devtunnel-hub
     spec:
+      # The Hub does not call the Kubernetes API.
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
       securityContext:
+        seccompProfile:
+          type: RuntimeDefault
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
@@ -49,8 +53,8 @@ spec:
             capabilities:
               drop: [ALL]
           resources:
-            requests: {cpu: 250m, memory: 512Mi}
-            limits: {cpu: "1", memory: 1Gi}
+            requests: {cpu: 250m, memory: 512Mi, ephemeral-storage: 128Mi}
+            limits: {cpu: "1", memory: 1Gi, ephemeral-storage: 512Mi}
           livenessProbe:
             httpGet: {path: /live, port: 8080}
             initialDelaySeconds: 10
@@ -68,7 +72,9 @@ spec:
         - name: config
           configMap: {name: devtunnel-hub-config}
         - name: runtime
-          emptyDir: {medium: Memory}
+          # Memory-backed volumes count toward the container's memory budget.
+          # Size these limits and memory together for the intended session count.
+          emptyDir: {medium: Memory, sizeLimit: 256Mi}
         - name: temporary
-          emptyDir: {medium: Memory}
+          emptyDir: {medium: Memory, sizeLimit: 128Mi}
 # Intentionally no Service, Ingress or externally accessible administration port.

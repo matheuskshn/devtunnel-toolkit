@@ -10,7 +10,7 @@ export function squidConfig(config: Config, sessions: Session[], runDir: string)
     'cache deny all', 'cache_mem 16 MB', 'maximum_object_size 0 KB',
     'cache_store_log none', 'cache_log /dev/null', 'logfile_rotate 0', 'log_mime_hdrs off',
     'strip_query_terms on', 'forwarded_for delete', 'via off', 'shutdown_lifetime 2 seconds',
-    'pinger_enable off', 'netdb_filename none', 'coredump_dir /tmp',
+    'pinger_enable off', 'icp_port 0', 'htcp_port 0', 'netdb_filename none', 'coredump_dir /tmp',
     // Domain and port only, NEVER full URI, path, headers or credentials.
     'logformat hub %ts.%03tu %>lp %#rm %#>rd %>rP %>Hs %<st %tr',
     `access_log stdio:${runDir}/audit.fifo hub`,
@@ -36,7 +36,7 @@ export function squidConfig(config: Config, sessions: Session[], runDir: string)
     }
   } else {
     // Keep Squid healthy before enrollment; this deny-only listener is never published.
-    lines.push('http_port 127.0.0.1:3140 name=unassigned');
+    lines.push(`http_port 127.0.0.1:${config.proxyPort} name=unassigned`);
   }
   lines.push('http_access deny all');
   return lines.join('\n') + '\n';

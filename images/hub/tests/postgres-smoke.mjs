@@ -22,10 +22,14 @@ try {
     '--tmpfs','/run/hub:uid=1000,gid=1000,mode=0700','--tmpfs','/tmp:mode=1777',
     '--env','HUB_STORAGE_BACKEND=postgres','--env','HUB_ID=runtimehub','--env','HUB_PG_HOST=postgres',
     '--env','HUB_PG_DATABASE=hubtest','--env','HUB_PG_USER=postgres','--env','HUB_PG_PASSWORD=synthetic-test-only',
-    '--env','HUB_PG_SSLMODE=disable','--env',`HUB_CREDENTIAL_KEY=${randomBytes(32).toString('base64')}`];
+    '--env','HUB_PG_SSLMODE=disable','--env',`HUB_CREDENTIAL_KEY=${randomBytes(32).toString('base64')}`,
+    '--env','HUB_WEB_ENABLED=true','--env','HUB_WEB_ORIGIN=http://localhost:8082',
+    '--env',`HUB_WEB_KEY=${randomBytes(32).toString('base64')}`,
+    '--mount',`type=bind,src=${tests},dst=/tests,readonly`];
   async function ready(){for(let i=0;i<40;i++){if(spawnSync('docker',['exec',app,'hub','health'],{stdio:'ignore'}).status===0)return;await delay(250);}throw Error('HUB_READINESS_FAILED');}
   docker(['run','--detach','--name',app,...settings,image]);await ready();
   docker(['exec',app,'hub','session','add','user-a']);
+  console.log(docker(['exec',app,'node','/tests/web-probe.mjs','initial']).trim());
   const conflict=spawnSync('docker',['run','--rm','--name',second,...settings,image],{encoding:'utf8',timeout:15000});
   assert.equal(conflict.status,75);
   const auth=spawnSync('docker',['exec',app,'hub','session','start','user-a'],{encoding:'utf8'});assert.notEqual(auth.status,0);
@@ -33,6 +37,7 @@ try {
   docker(['kill','--signal','KILL',app]);docker(['rm',app]);
   docker(['run','--detach','--name',app,...settings,image]);await ready();
   assert.equal(JSON.parse(docker(['exec',app,'hub','session','list']))[0].listener,18001);
+  console.log(docker(['exec',app,'node','/tests/web-probe.mjs','restored']).trim());
   docker(['exec',db,'psql','-U','postgres','-d','hubtest','-c',"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name='devtunnel-toolkit-hub'"]);
   for(let i=0;i<40;i++){if(docker(['inspect','--format','{{.State.Running}}',app]).trim()==='false')break;await delay(250);}
   assert.equal(docker(['inspect','--format','{{.State.Running}}',app]).trim(),'false');

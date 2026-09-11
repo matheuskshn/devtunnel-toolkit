@@ -6,11 +6,14 @@ import path from 'node:path';
 import { fork, type ChildProcess } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
-import { check, errorCode, HubError, type Session, type Config, type Provider } from './model.js';
+import { check, DEFAULT_PROXY_PORT, errorCode, HubError, parseConfig, type Session, type Config, type Provider } from './model.js';
 import { StateStore, privateDirectory, atomicWrite, type Persistence } from './state.js';
-import { SessionRuntime, parseJson, canonicalTunnel } from './auth.js';
+import { SessionRuntime, parseJson, canonicalTunnel, privateTunnel } from './auth.js';
 import { squidConfig, auditRecord } from './squid.js';
 import { launch, terminate, command, cleanEnvironment } from './processes.js';
+import {ControlStore} from './web/control.js';
+import {webOptions} from './web/security.js';
+import {WebConsole} from './web/server.js';
 
 export class Manager {
   readonly store: StateStore;
@@ -30,15 +33,31 @@ export class Manager {
   private clients = new Set<Socket>();
   private auditStream?: ReadStream;
   private auditFd?: number;
+  private web?: WebConsole;
+  private control?: ControlStore;
+  private changingPolicy = false;
+  private webPort?: number;
   constructor(readonly config: Config, readonly dataDir: string, readonly runDir: string, readonly persistence?: Persistence) {
     this.store = new StateStore(dataDir, config, persistence);
   }
   log(event: string, session?: Session, code?: string): void {
-    process.stdout.write(JSON.stringify({ time: new Date().toISOString(), event, session_id: session?.id, code }) + '\n');
+    const record = { time: new Date().toISOString(), event, session_id: session?.id, code };
+    this.web?.record(record); process.stdout.write(JSON.stringify(record) + '\n');
   }
   async open(): Promise<void> {
     await privateDirectory(this.runDir);
     await this.store.load();
+    const options = webOptions(process.env);
+    if (options) {
+      this.webPort = options.port;
+      this.control = new ControlStore(this.store, options.key, ()=>this.fence()); await this.control.load();
+      if (this.control.data.policy) Object.assign(this.config, parseConfig({...this.config, ...this.control.data.policy}));
+      check(options.port !== this.config.healthPort && options.port !== this.config.proxyPort && options.port !== this.config.socksPort &&
+        !(options.port >= this.config.listenerStart && options.port <= this.config.listenerEnd), 'WEB_PORT_COLLISION');
+      this.web = new WebConsole({config:this.config, sessions:()=>this.store.state.sessions,
+        ready:()=>this.healthy&&!this.stopping, dispatch:(args,output)=>this.dispatch(args,output),
+        policy:(value,persist)=>this.applyPolicy(value,persist), track:operation=>this.track(operation)},this.control,options);
+    }
     for (const s of this.store.state.sessions) if (['running','starting'].includes(s.status)) s.status = 'stopped';
     await this.store.save();
     const fifo = path.join(this.runDir, 'audit.fifo');
@@ -49,6 +68,7 @@ export class Manager {
     const lines = createInterface({ input: this.auditStream });
     lines.on('line', line => {
       const record = auditRecord(line, this.store.state.sessions);
+      if (record) this.web?.record(record);
       if (record && !process.stdout.write(JSON.stringify(record) + '\n')) {
         this.auditStream!.pause(); process.stdout.once('drain', () => this.auditStream?.resume());
       }
@@ -66,6 +86,7 @@ export class Manager {
       res.end(JSON.stringify({ ok: found && ok }));
     });
     await new Promise<void>((resolve, reject) => { this.health!.once('error', reject); this.health!.listen(this.config.healthPort, '0.0.0.0', resolve); });
+    await this.web?.open();
     this.log('manager_ready');
     for (const s of this.store.state.sessions.filter(s => s.desired && s.status !== 'removed')) {
       this.track(this.exclusive(s.id, () => this.start(s)).catch(e => this.fail(s, e)));
@@ -77,9 +98,26 @@ export class Manager {
     return operation;
   }
   private async exclusive<T>(id: string, action: () => Promise<T>): Promise<T> {
-    check(!this.stopping, 'MANAGER_STOPPING'); check(!this.busy.has(id), 'SESSION_BUSY');
+    check(!this.stopping, 'MANAGER_STOPPING'); check(!this.changingPolicy && !this.busy.has(id), 'SESSION_BUSY');
     this.busy.add(id);
     try { return await action(); } finally { this.busy.delete(id); }
+  }
+  private async applyPolicy(value: Partial<Config>, persist: ()=>Promise<void>): Promise<void> {
+    check(!this.stopping && !this.changingPolicy, 'MANAGER_STOPPING');
+    check(this.busy.size===0 && this.workers.size===0 && this.store.state.sessions.every(s=>!s.desired), 'STOP_SESSIONS_FIRST');
+    const next=parseConfig({...this.config,...value}), previous={...this.config};
+    check(next.proxyPort !== this.webPort && next.socksPort !== this.webPort, 'WEB_PORT_COLLISION');
+    if (next.socksEnabled) check(this.store.state.sessions.filter(s => s.status !== 'removed' && s.socks_listener === undefined).length <= this.config.listenerEnd - this.store.state.next_listener + 1, 'LISTENER_POOL_EXHAUSTED');
+    check(this.store.state.sessions.filter(s=>s.status!=='removed').length<=next.maxSessions,'SESSION_LIMIT_BELOW_USAGE');
+    this.changingPolicy=true;
+    try {
+      await Promise.all([...this.runtimes.values()].map(r=>r.close())); this.runtimes.clear();
+      Object.assign(this.config,next); await this.configureSquid(); await persist();
+    } catch(e) {
+      Object.assign(this.config,previous);
+      try { await this.configureSquid(); } catch { this.fence(); }
+      throw e;
+    } finally { this.changingPolicy=false; }
   }
   private configureSquid(): Promise<void> {
     const task = this.configQueue.then(async () => {
@@ -101,7 +139,7 @@ export class Manager {
         });
       }
       const ports = this.store.state.sessions.filter(s => s.identity && s.status !== 'removed').map(s => s.listener);
-      if (!ports.length) ports.push(3140);
+      if (!ports.length) ports.push(this.config.proxyPort);
       await Promise.all(ports.map(async port => {
         for (let attempt = 0; attempt < 50; attempt++) {
           const reachable = await new Promise<boolean>(resolve => {
@@ -165,7 +203,30 @@ export class Manager {
     check(canonicalTunnel(tunnel) === s.tunnel_id, 'TUNNEL_ID_CHANGED');
     check(tunnel.accessControl && Array.isArray(tunnel.accessControl.entries) && tunnel.accessControl.entries.length === 0, 'TUNNEL_NOT_OWNER_ONLY');
     check(Array.isArray(tunnel.ports), 'TUNNEL_SCHEMA_UNSUPPORTED');
-    if (!tunnel.ports.length) await runtime.cli(['port', 'create', s.tunnel_id, '--port-number', '3140', '--protocol', 'auto', '--json']);
+    const targets = [this.config.proxyPort, ...(this.config.socksEnabled ? [this.config.socksPort] : [])];
+    const known = new Set([s.proxy_port ?? DEFAULT_PROXY_PORT, ...targets, ...(s.socks_port === undefined ? [] : [s.socks_port])]);
+    let current = tunnel.ports.map((p: any) => p?.portNumber) as number[];
+    check(current.every(p => known.has(p)), 'TUNNEL_PORT_POLICY_CHANGED');
+    privateTunnel(tunnel, s, current); // Validate every ACL and duplicate before mutation.
+    // Only recorded or desired ports are ever touched. Accept known subsets to
+    // recover an interrupted multi-port migration, but verify each exact read-back.
+    for (const port of current.filter(p => !targets.includes(p))) {
+      await runtime.cli(['port', 'delete', s.tunnel_id, '--port-number', String(port), '--json']);
+      current = current.filter(p => p !== port);
+      tunnel = await runtime.details(); privateTunnel(tunnel, s, current);
+    }
+    for (const port of targets.filter(p => !current.includes(p))) {
+      await runtime.cli(['port', 'create', s.tunnel_id, '--port-number', String(port), '--protocol', 'auto', '--json']);
+      current = [...current, port];
+      tunnel = await runtime.details(); privateTunnel(tunnel, s, current);
+    }
+    privateTunnel(tunnel, s, targets);
+    // A crash after a remote change is recoverable: the next start accepts either
+    // the last recorded port, the desired port, or an empty (partially migrated) tunnel.
+    s.proxy_port = this.config.proxyPort;
+    if (this.config.socksEnabled) s.socks_port = this.config.socksPort;
+    else delete s.socks_port;
+    await this.store.save();
   }
   private async start(s: Session): Promise<void> {
     check(this.config.allowedProviders.includes(s.provider), 'PROVIDER_NOT_ALLOWED');
@@ -177,6 +238,7 @@ export class Manager {
     const identity = await runtime.identity();
     check(identity.user_id === s.identity.user_id && identity.provider === s.provider, 'IDENTITY_CHANGED');
     this.store.resolveName(s);
+    if (this.config.socksEnabled) this.store.ensureSocksListener(s);
     await this.store.save();
     await this.provision(s, runtime);
     await runtime.credentials();
@@ -203,7 +265,9 @@ export class Manager {
       if (this.stopping || !s.desired) return;
       void this.fail(s, new HubError(code === 75 ? 'AUTH_REQUIRED' : 'WORKER_FAILED'));
     });
-    worker.send({ type: 'start', listener: s.listener, maintenanceSeconds: this.config.maintenanceSeconds });
+    worker.send({ type: 'start', listener: s.listener, proxyPort: this.config.proxyPort,
+      socks: this.config.socksEnabled ? {proxyPort: this.config.socksPort, listenerPort: s.socks_listener} : undefined,
+      maintenanceSeconds: this.config.maintenanceSeconds });
     this.log('session_starting', s);
   }
   private async credentialsForWorker(s: Session, runtime: SessionRuntime, worker: ChildProcess, id: number): Promise<void> {
@@ -243,6 +307,12 @@ export class Manager {
     const worker = this.workers.get(s.id); this.workers.delete(s.id); await terminate(worker);
   }
   async dispatch(args: string[], output: (chunk: string) => void): Promise<unknown> {
+    if (args[0] === 'admin') {
+      check(!this.stopping && this.control, 'WEB_DISABLED');
+      check(args.length===4 && args[1]==='reset-password', 'USAGE');
+      await this.control.resetPassword(args[2],args[3]); this.log('console_password_reset_cli');
+      return {ok:true, passwordChangePending:true, passwordChangeRequired:this.web?.options.requirePasswordChange ?? true};
+    }
     check(args[0] === 'session', 'USAGE');
     const [, operation, id, ...flags] = args;
     if (operation === 'list') { check(args.length === 2, 'USAGE'); return this.store.state.sessions.filter(s => s.status !== 'removed'); }
@@ -292,7 +362,8 @@ export class Manager {
       if (received) return;
       buffer += chunk;
       if (buffer.length > 8192) { socket.destroy(); return; }
-      if (!buffer.includes('\n')) return; received = true;
+      if (!buffer.includes('\n')) { return; }
+      received = true;
       this.track((async () => {
         try {
           const args = JSON.parse(buffer.split('\n')[0]);
@@ -307,7 +378,9 @@ export class Manager {
     });
   }
   async close(): Promise<void> {
-    if (this.stopping) return; this.stopping = true; this.healthy = false;
+    if (this.stopping) { return; }
+    this.stopping = true; this.healthy = false;
+    this.web?.close();
     this.socket?.close(); this.health?.close();
     for (const client of this.clients) client.destroy();
     for (const timer of this.retries.values()) clearTimeout(timer);
@@ -318,10 +391,12 @@ export class Manager {
     await terminate(this.squid);
     if (this.auditFd !== undefined) writeSync(this.auditFd, '\n');
     this.auditStream?.destroy();
-    if (this.store.state) await this.store.save(); this.log('manager_stopped');
+    if (this.store.state) { await this.store.save(); }
+    this.log('manager_stopped');
   }
   fence(): void {
     this.healthy = false;
+    this.web?.close();
     // A lost database session must not leave an old relay host serving traffic.
     for (const runtime of this.runtimes.values()) runtime.abort.abort();
     for (const worker of this.workers.values()) worker.kill('SIGKILL');

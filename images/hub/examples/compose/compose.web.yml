@@ -1,0 +1,21 @@
+services:
+  hub:
+    image: devtunnel-toolkit-hub:local
+    build:
+      context: ../..
+    env_file:
+      - ${HUB_ENV_FILE:?Set HUB_ENV_FILE to an external environment file}
+    ports:
+      - "127.0.0.1:8082:8082"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /run/hub:uid=1000,gid=1000,mode=0700
+      - /tmp:mode=1777
+    volumes:
+      - hub-data:/data
+    stop_grace_period: 25s
+    restart: unless-stopped
+volumes:
+  hub-data:
