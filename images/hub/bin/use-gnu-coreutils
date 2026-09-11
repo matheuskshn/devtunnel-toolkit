@@ -2,9 +2,15 @@
 set -eu
 export LC_ALL=C
 
+case "${1:-}" in
+  validate-plan|verify-installed) ;;
+  *) echo 'usage: use-gnu-coreutils validate-plan|verify-installed' >&2; exit 64 ;;
+esac
+
 # Ubuntu documents this provider replacement. Refuse any broader removal plan
 # before allowing removal of the old Essential provider metapackage.
 # https://documentation.ubuntu.com/release-notes/26.04/summary-for-lts-users/
+if [ "$1" = validate-plan ]; then
 plan=$(mktemp)
 trap 'rm -f "$plan"' EXIT HUP INT TERM
 apt-get --simulate install --no-install-recommends \
@@ -18,8 +24,9 @@ awk '
     if (removed["coreutils-from-uutils"] != 1 || removed["rust-coreutils"] != 1) exit 1
   }
 ' "$plan"
-apt-get install -y --no-install-recommends --allow-remove-essential \
-  coreutils-from-gnu coreutils-from-uutils- rust-coreutils-
+exit 0
+fi
+
 test "$(dpkg-query -W -f '${db:Status-Status}' coreutils-from-gnu)" = installed
 test "$(dpkg-query -W -f '${db:Status-Status}' gnu-coreutils)" = installed
 if dpkg-query -W -f '${db:Status-Status}' rust-coreutils 2>/dev/null | grep -qx installed; then

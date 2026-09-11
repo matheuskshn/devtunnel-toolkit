@@ -10,13 +10,24 @@ const images = [
     dockerfile: "Dockerfile",
     context: ".",
     description: "Developer toolkit for Microsoft Dev Tunnels",
-    files: ["Dockerfile", ".dockerignore", "docker/devtunnel-entrypoint"],
+    files: [
+      "Dockerfile",
+      ".dockerignore",
+      "docker/devtunnel-entrypoint",
+      ...[
+        "build-native-libraries",
+        "build-mime-backport",
+        "native-mime-regression.c",
+        "package-native-libraries.mjs",
+        "p11-kit-module-soname.patch",
+      ].map((f) => `images/hub/bin/${f}`),
+    ],
   },
   {
     title: "Squid proxy",
     image: "devtunnel-toolkit-squid",
     dockerfile: "images/squid/Dockerfile",
-    context: "images/squid",
+    context: ".",
     description: "Squid proxy for DevTunnel Toolkit",
     files: [
       "images/squid/Dockerfile",
@@ -29,7 +40,7 @@ const images = [
     title: "Selective route proxy",
     image: "devtunnel-toolkit-route-proxy",
     dockerfile: "images/tinyproxy/Dockerfile",
-    context: "images/tinyproxy",
+    context: ".",
     description: "Selective local route proxy for DevTunnel Toolkit clients",
     files: [
       "images/tinyproxy/Dockerfile",
@@ -42,7 +53,7 @@ const images = [
     title: "OpenVPN server",
     image: "devtunnel-toolkit-openvpn",
     dockerfile: "images/openvpn/Dockerfile",
-    context: "images/openvpn",
+    context: ".",
     description: "OpenVPN server for DevTunnel Toolkit",
     files: [
       "images/openvpn/Dockerfile",
@@ -62,7 +73,13 @@ const hubFiles = new Set(
 );
 export function selectImages(files, force = false) {
   const include = images
-    .filter((image) => force || image.files.some((f) => files.includes(f)))
+    .filter(
+      (image) =>
+        force ||
+        files.includes(".dockerignore") ||
+        files.includes("images/hub/bin/use-gnu-coreutils") ||
+        image.files.some((f) => files.includes(f)),
+    )
     .map(({ files, ...image }) => image);
   return {
     matrix: { include },

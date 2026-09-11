@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# Evaluation candidate. The default Dockerfile remains the Debian baseline.
+# Compatibility build entrypoint. Keep identical to the default Dockerfile.
 FROM node:24-trixie-slim@sha256:6950b66b4c0cb0151ce89fa75074673850763d096b044f422c6729b588dd4956 AS build
 WORKDIR /build
 COPY package.json package-lock.json ./
@@ -67,7 +67,10 @@ RUN test -f /usr/bin/pebble && test ! -L /usr/bin/pebble \
 # Replace Ubuntu's default utility provider using the official GNU packages.
 # The helper validates the exact removal plan before replacing the provider.
 RUN --mount=type=bind,source=bin/use-gnu-coreutils,target=/tmp/use-gnu-coreutils \
-    apt-get update && sh /tmp/use-gnu-coreutils \
+    apt-get update && sh /tmp/use-gnu-coreutils validate-plan \
+    && apt-get install -y --no-install-recommends --allow-remove-essential \
+       coreutils-from-gnu coreutils-from-uutils- rust-coreutils- \
+    && sh /tmp/use-gnu-coreutils verify-installed \
     && rm -rf /var/lib/apt/lists/*
 RUN --mount=type=bind,from=native,source=/native/debs,target=/native-debs \
     apt-get update && apt-get install -y --no-install-recommends /native-debs/*.deb \

@@ -76,8 +76,8 @@ services:
   squid:
     image: ${SQUID_IMAGE:-devtunnel-toolkit-squid:local}
     build:
-      context: images/squid
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: images/squid/Dockerfile
     network_mode: host
     volumes:
       - type: bind
@@ -104,23 +104,15 @@ services:
   openvpn:
     image: ${OPENVPN_IMAGE:-devtunnel-toolkit-openvpn:local}
     build:
-      context: images/openvpn
-      dockerfile: Dockerfile
-    # A private bridge confines NET_ADMIN, TUN and NAT to this container.
-    # The host-networked tunnel client still connects to the same published port.
-    ports:
-      - target: ${OVPN_PORT:-53194}
-        published: "${OVPN_PORT:-53194}"
-        host_ip: "${OVPN_LISTEN_ADDRESS:-127.0.0.1}"
-        protocol: ${OVPN_PROTO:-tcp}
-    sysctls:
-      net.ipv4.ip_forward: "1"
+      context: .
+      dockerfile: images/openvpn/Dockerfile
+    network_mode: service:openvpn-network
+    depends_on:
+      openvpn-network:
+        condition: service_healthy
+        restart: true
     cap_drop:
       - ALL
-    cap_add:
-      - NET_ADMIN
-      - SETUID
-      - SETGID
     security_opt:
       - no-new-privileges:true
     devices:
@@ -159,6 +151,44 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    restart: unless-stopped
+
+  openvpn-network:
+    image: ${OPENVPN_IMAGE:-devtunnel-toolkit-openvpn:local}
+    build:
+      context: .
+      dockerfile: images/openvpn/Dockerfile
+    # Bootstrap only: then exec a non-root, capability-free namespace keeper.
+    # No server PKI mount, host networking, or privileged mode.
+    user: "0:0"
+    entrypoint: [/usr/local/bin/openvpn-entrypoint]
+    ports:
+      - target: ${OVPN_PORT:-53194}
+        published: "${OVPN_PORT:-53194}"
+        host_ip: "${OVPN_LISTEN_ADDRESS:-127.0.0.1}"
+        protocol: ${OVPN_PROTO:-tcp}
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    cap_drop: [ALL]
+    cap_add: [NET_ADMIN, SETUID, SETGID, SETPCAP]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs: [/run:mode=755, /etc/openvpn:mode=000]
+    devices: [/dev/net/tun:/dev/net/tun]
+    environment:
+      OVPN_NETWORK: "${OVPN_NETWORK:-10.8.0.0}"
+      OVPN_NETMASK: "${OVPN_NETMASK:-255.255.255.0}"
+      OVPN_CIDR: "${OVPN_CIDR:-10.8.0.0/24}"
+    command: [network]
+    healthcheck:
+      test:
+        [
+          CMD-SHELL,
+          "ip -4 address show dev tun0 | grep -q 'inet ' && grep -Eq '^Uid:[[:space:]]+10001' /proc/1/status && grep -Eq '^CapEff:[[:space:]]+0+$$' /proc/1/status",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 15
     restart: unless-stopped
 
 volumes:

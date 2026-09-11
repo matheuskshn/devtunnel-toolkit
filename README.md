@@ -151,11 +151,40 @@ docker compose run --rm openvpn client > devtunnel-toolkit.ovpn
 
 OpenVPN runs on a private Docker bridge. Compose publishes its port on host
 loopback so the host-networked Dev Tunnels client can still reach it. The VPN
-container no longer shares the host network or uses `privileged: true`.
+server shares only the private namespace of `openvpn-network`, not the host
+network. Neither service uses `privileged: true`.
 Services bound only to host loopback and routes available only in the host
 namespace may require explicit, narrowly scoped networking changes. Validate
 your intended destinations after migrating; the bridge is not equivalent to
 host networking. Do not restore broad privileges to work around routing.
+
+The server starts as UID/GID `10001:10001`, with all capabilities dropped and
+`no-new-privileges` enabled. `openvpn-network` prepares a persistent TUN owned
+by that user and the namespace's NAT rules. It then replaces itself with an
+unprivileged namespace keeper. That bootstrap has no PKI mount. OpenVPN attaches
+to the prepared interface using `ifconfig-noexec` and `route-noexec`; DCO is
+disabled. `OVPN_NETWORK`, `OVPN_NETMASK` and `OVPN_CIDR` must describe the same
+aligned IPv4 subnet. Preparation must complete before the server starts.
+
+Restarting **only the server** preserves this network and the PKI. If replacing
+the network keeper, recovering from its failure, or changing the VPN subnet,
+recreate both services together (do not remove volumes):
+
+```bash
+docker compose up -d --force-recreate openvpn-network openvpn
+```
+
+Compose's dependency ordering coordinates explicit operations; Docker's
+automatic restart policy does not restart dependent containers. A keeper
+failure/restart can leave the server in an old namespace, requiring the command
+above. Local listener health is not proof of end-to-end VPN connectivity.
+
+Existing root-owned PKI volumes require an operator-controlled migration:
+stop both services, back up the volume, change its ownership to `10001:10001`,
+and verify the original key/certificate hashes before starting the new image.
+The entrypoint refuses a foreign-owned directory or incomplete PKI; it never
+automatically changes ownership or replaces existing private keys. Keep backups
+and client profiles private and outside the repository.
 
 Stop the toolkit:
 
@@ -420,7 +449,7 @@ containers so internal TLS endpoints can use locally trusted corporate CAs.
 | Variable                | Default                                | Description                                           |
 | ----------------------- | -------------------------------------- | ----------------------------------------------------- |
 | `LOCAL_CA_BUNDLE`     | `/etc/ssl/certs/ca-certificates.crt` | Host CA bundle path; common on Debian/Ubuntu hosts    |
-| `CONTAINER_CA_BUNDLE` | `/etc/ssl/certs/ca-certificates.crt` | CA bundle path inside the Debian-based toolkit images |
+| `CONTAINER_CA_BUNDLE` | `/etc/ssl/certs/ca-certificates.crt` | CA bundle path inside the Ubuntu-based toolkit images |
 
 On RHEL, Rocky, Fedora, and similar hosts, set:
 
@@ -523,10 +552,13 @@ recovery and the distinction between image publication and deployment acceptance
 - The selective route list controls forwarding only. It is not a firewall or an
   authorization policy.
 - `ALLOW_ANONYMOUS=true` can expose your proxy/VPN to anyone with the tunnel URL or connection details.
-- OpenVPN starts as root with only `NET_ADMIN`, `SETUID` and `SETGID` capabilities
-  to configure TUN/NAT, then runs as `nobody` retaining `NET_ADMIN` for its network
-  interface operations. Compose drops other capabilities and enables
-  `no-new-privileges`; this is not a fully unprivileged/rootless service.
+- The OpenVPN server starts as UID/GID `10001:10001`, with no capabilities.
+  Its separate network initializer temporarily uses UID 0 and `NET_ADMIN`,
+  `SETUID`, `SETGID`, `SETPCAP`, then drops root and every capability before
+  keeping the namespace alive. It has a read-only root and no PKI mount.
+  This still requires a Linux runtime that permits TUN and privileged network
+  initialization; it is not a rootless Docker deployment. Administrative exec
+  in the initializer container inherits its bootstrap user/capability settings.
 - Treat generated `.ovpn` files, tunnel URLs, and access tokens as secrets.
 - Review pushed VPN routes before starting the service in sensitive networks.
 

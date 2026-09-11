@@ -163,7 +163,7 @@ export function registryDigest(ref) {
     throw new Error("REGISTRY_INSPECTION_FAILED");
   }
 }
-function repositories(image) {
+export function repositories(image) {
   const owner = process.env.GITHUB_REPOSITORY_OWNER?.toLowerCase();
   if (!/^[a-z0-9][a-z0-9-]*$/.test(owner ?? ""))
     throw new Error("INVALID_REGISTRY_OWNER");
@@ -178,24 +178,22 @@ function repositories(image) {
   }
   return result;
 }
-function candidate(image, version, sha) {
+export function candidate(image, version, sha) {
   const repository = repositories(image)[0],
     ref = `${repository}:candidate-${version}`;
   const actual = registryDigest(ref);
   if (!actual) return { ref, repository };
-  const raw = JSON.parse(
-    skopeo("inspect", ["--raw", `docker://${repository}@${actual}`]),
-  );
+  const platforms = verifyImage(`${repository}@${actual}`, version, sha);
+  return { ref, repository, digest: actual, platforms };
+}
+export function verifyImage(ref, version, sha) {
+  const raw = JSON.parse(skopeo("inspect", ["--raw", `docker://${ref}`]));
   const platforms = (raw.manifests ?? [])
     .filter((m) => m.platform?.os === "linux")
     .map((m) => `${m.platform.os}/${m.platform.architecture}`);
   for (const arch of ["amd64", "arm64"]) {
     const config = JSON.parse(
-      skopeo("inspect", [
-        "--override-arch",
-        arch,
-        `docker://${repository}@${actual}`,
-      ]),
+      skopeo("inspect", ["--override-arch", arch, `docker://${ref}`]),
     );
     if (
       config.Labels?.["org.opencontainers.image.revision"] !== sha ||
@@ -204,7 +202,7 @@ function candidate(image, version, sha) {
       throw new Error("CANDIDATE_IDENTITY_MISMATCH");
   }
   validatePlatforms(platforms);
-  return { ref, repository, digest: actual, platforms };
+  return platforms;
 }
 export async function promoteSuite({
   records,
@@ -332,6 +330,7 @@ function recordCandidate(mode, info, sha) {
       JSON.stringify(validateAttestation(data, key), null, 2) + "\n",
     );
   }
+  output("ref", `${built.repository}@${built.digest}`);
 }
 async function finalizeRelease(info, sha) {
   const release = await prepareRelease({

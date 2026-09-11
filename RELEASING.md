@@ -70,7 +70,7 @@ Pin production deployments by `image@sha256:...`, not `edge` or `latest`.
    and out-of-order stable releases. Create or retain the draft release.
 2. Run suite policy/unit checks, shell syntax checks, dependency audit and the
    Hub container smoke. A failed check prevents candidate builds.
-3. Build all five images for AMD64 and ARM64 in parallel. Candidate images use
+3. Build all five images on native AMD64 and ARM64 runners in parallel. Candidate images use
    GHCR `candidate-<version>` tags with source-revision and version labels.
    Retries reuse candidates only after validating both architectures and labels.
 4. Collect image digests, per-platform SBOMs and provenance. Validate the complete
@@ -95,6 +95,29 @@ These are workflow-side safeguards, not server-enforced registry immutability.
 Restrict package writers and Git tag updates; use registry immutability settings
 where available. Never force-push a released version or manually overwrite its
 image tags. The coordinator does not automatically roll back partial publication.
+
+## Native build and manifest assembly
+
+Docker, Hub and suite releases share `native-image.yml`. It requires
+`ubuntu-24.04` (AMD64) and `ubuntu-24.04-arm` (ARM64), checks `uname -m` and runs
+the native library regressions without QEMU or sanitizer bypasses. PRs build
+without registry login or publication. Image selection remains code-based;
+manual executions and release tags retain their explicit rebuild behavior.
+
+Publishing jobs first push each platform by digest and exchange those digests
+through run-scoped artifacts. The merge job creates a temporary
+`native-<commit>-<run>-<attempt>` index, verifies both platform identities and
+both SBOM/provenance documents, and only then promotes development tags or
+the release candidate. A HIGH/CRITICAL scan of the exact platform digests gates
+promotion. The release record job rescans even reused candidates by digest
+before uploading records for finalization. Docker Hub receives the same multi-platform digest.
+Missing architectures, missing attestations and conflicting immutable tags
+fail closed. Suite finalization still waits for all five verified candidate
+records; it alone promotes release versions and stable aliases.
+
+Temporary native tags and untagged platform manifests may remain after a
+failed job. Do not infer release completion from them or delete referenced
+manifests during recovery. Registry cleanup is a separate operator action.
 
 ## Registries and release assets
 

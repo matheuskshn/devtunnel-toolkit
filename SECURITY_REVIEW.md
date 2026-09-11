@@ -2,6 +2,21 @@
 
 Data: 2026-09-09. **Publicação bloqueada.**
 
+Remediação local de 2026-09-11: os novos builds das quatro imagens legadas
+passaram no filtro HIGH/CRITICAL, preservando achados MEDIUM/LOW. O alerta APT
+DS-0017 e DS-0002 foram corrigidos. O Hub padrão agora usa a receita Ubuntu;
+OpenVPN separa a preparação privilegiada do servidor não root. A publicação
+nativa foi adaptada no código, mas o novo conjunto ainda exige execução em CI.
+Há avisos LOW de HEALTHCHECK nos Dockerfiles e achados no exemplo Kubernetes.
+Consulte os
+[resultados, imagens examinadas e limites](images/IMAGE_REMEDIATION.md).
+
+O [CI nativo anterior](https://github.com/matheuskshn/devtunnel-toolkit/actions/runs/34593705499)
+aprovou AMD64 e ARM64 para a candidata do Hub no commit `2cdfdb5`. Esse resultado
+supera o bloqueio de QEMU descrito abaixo, mas não valida automaticamente as
+novas mudanças locais das demais imagens. Os parágrafos seguintes registram os
+estágios anteriores da análise.
+
 Atualização de 2026-09-11: a [candidata Ubuntu com bibliotecas recompiladas](images/hub/UBUNTU_CVE_REMEDIATION.md)
 incorpora correções para 32 dos 46 CVEs remanescentes, incluindo os oito
 prioritários. O scan bruto permanece em 60 ocorrências; correções, componentes

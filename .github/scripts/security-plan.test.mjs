@@ -54,6 +54,16 @@ for (const [name, overrides] of [
     assert.equal(lines[1], "any=true");
     const { include } = JSON.parse(lines[0].slice("matrix=".length));
     assert.equal(include.length, 10);
+    for (const image of include) {
+      assert.equal(
+        image.runner,
+        image.platform === "linux/arm64" ? "ubuntu-24.04-arm" : "ubuntu-24.04",
+      );
+      assert.equal(
+        image.machine,
+        image.platform === "linux/arm64" ? "aarch64" : "x86_64",
+      );
+    }
     assert.equal(new Set(include.map((item) => item.image)).size, 5);
     assert.equal(
       new Set(include.map((item) => `${item.image}:${item.platform}`)).size,

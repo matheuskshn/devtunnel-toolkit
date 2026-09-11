@@ -43,6 +43,22 @@ jobs:
       container: true
   build:
     needs: [prepare, checks]
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    uses: ./.github/workflows/native-image.yml
+    with:
+      image: ${{ matrix.image }}
+      ref: ${{ needs.prepare.outputs.sha }}
+      publish: true
+      mode: release
+      tag: ${{ inputs.tag }}
+    secrets: inherit
+  record:
+    needs: [prepare, checks, build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -61,7 +77,6 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "24"
-      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - run: sudo apt-get update && sudo apt-get install -y skopeo
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -69,26 +84,19 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Reuse an already verified candidate on retries
-        id: candidate
-        run: node .github/scripts/release.mjs candidate
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        if: steps.candidate.outputs.exists != 'true'
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.candidate.outputs.ref }}
-          labels: |
-            org.opencontainers.image.version=${{ needs.prepare.outputs.version }}
-            org.opencontainers.image.revision=${{ needs.prepare.outputs.sha }}
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          provenance: true
-          sbom: true
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
-      - run: node .github/scripts/release.mjs record
+      - id: record
+        run: node .github/scripts/release.mjs record
+      - run: bash .github/scripts/install-security-tools.sh "$RUNNER_TEMP/security-tools"
+      - name: Rescan the recorded candidate, including reused candidates
+        env:
+          CANDIDATE_REF: ${{ steps.record.outputs.ref }}
+        run: |
+          for arch in amd64 arm64; do
+            "$RUNNER_TEMP/security-tools/trivy" image --image-src remote \
+              --cache-dir "$RUNNER_TEMP/candidate-trivy-cache" --timeout 10m \
+              --platform "linux/$arch" --scanners vuln --severity HIGH,CRITICAL \
+              --exit-code 1 "$CANDIDATE_REF"
+          done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-${{ matrix.image }}
@@ -97,7 +105,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
   finalize:
-    needs: [prepare, checks, build]
+    needs: [prepare, checks, record]
     runs-on: ubuntu-latest
     permissions:
       contents: write

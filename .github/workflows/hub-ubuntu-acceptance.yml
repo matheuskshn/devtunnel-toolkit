@@ -3,6 +3,7 @@ on:
   workflow_dispatch:
   pull_request:
     paths:
+      - images/hub/Dockerfile
       - images/hub/Dockerfile.ubuntu
       - images/hub/.dockerignore
       - images/hub/.c8rc.json
@@ -31,8 +32,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {runner: ubuntu-24.04, arch: amd64, machine: x86_64}
-          - {runner: ubuntu-24.04-arm, arch: arm64, machine: aarch64}
+          - { runner: ubuntu-24.04, arch: amd64, machine: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: arm64, machine: aarch64 }
     env:
       HUB_TEST_IMAGE: devtunnel-toolkit-hub:ubuntu-acceptance
       EXPECTED_MACHINE: ${{ matrix.machine }}
@@ -61,10 +62,10 @@ jobs:
           npm run check:public
           npm run test:coverage 2>&1 | tee "$REPORTS/tests.log"
           npm audit --audit-level=low
-      - name: Build Ubuntu candidate with mandatory native regressions
+      - name: Build default Ubuntu image with mandatory native regressions
         run: |
           docker build --platform "linux/$TARGET_ARCH" --progress=plain \
-            -f images/hub/Dockerfile.ubuntu -t "$HUB_TEST_IMAGE" images/hub \
+            -f images/hub/Dockerfile -t "$HUB_TEST_IMAGE" images/hub \
             2>&1 | tee "$REPORTS/build.log"
           test "$(docker image inspect --format '{{.Architecture}}' "$HUB_TEST_IMAGE")" = "$TARGET_ARCH"
           docker image inspect "$HUB_TEST_IMAGE" > "$REPORTS/image.json"
@@ -77,7 +78,7 @@ jobs:
       - name: Audit native packages outside the runtime image
         run: |
           docker build --platform "linux/$TARGET_ARCH" --target native \
-            -f images/hub/Dockerfile.ubuntu -t hub-native-audit:local images/hub
+            -f images/hub/Dockerfile -t hub-native-audit:local images/hub
           docker run --rm --security-opt no-new-privileges \
             --mount "type=bind,src=$PWD/images/hub/tests/native-package-audit.mjs,dst=/audit.mjs,readonly" \
             --mount "type=bind,src=$PWD/images/hub/tests,dst=/tests,readonly" \

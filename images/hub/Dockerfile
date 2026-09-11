@@ -1,4 +1,5 @@
 # syntax=docker/dockerfile:1
+# Ubuntu LTS runtime with source-verified native library security fixes.
 FROM node:24-trixie-slim@sha256:6950b66b4c0cb0151ce89fa75074673850763d096b044f422c6729b588dd4956 AS build
 WORKDIR /build
 COPY package.json package-lock.json ./
@@ -7,17 +8,42 @@ COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npm run build && npm prune --omit=dev --ignore-scripts
 
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132
+# Same Ubuntu ABI as the runtime. Sources are checksum-pinned, compiled, tested
+# and packaged with ownership/provenance; never overlay untracked shared objects.
+FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d AS native
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential binutils dpkg-dev ca-certificates curl xz-utils patch \
+    cmake meson ninja-build pkg-config gettext libffi-dev libpcre2-dev \
+    libmount-dev libselinux1-dev zlib1g-dev libtasn1-6-dev libsystemd-dev \
+    dbus-daemon dbus-bin libexpat1 libglib2.0-0t64 libp11-kit0 p11-kit p11-kit-modules
+RUN apt-get install -y --no-install-recommends libtasn1-bin
+COPY --from=build /usr/local/bin/node /usr/local/bin/node
+COPY bin/build-native-libraries /build-tools/
+RUN sh /build-tools/build-native-libraries sources
+RUN sh /build-tools/build-native-libraries expat
+RUN sh /build-tools/build-native-libraries glib
+COPY bin/p11-kit-module-soname.patch /native/sources/
+RUN apt-get install -y --no-install-recommends systemd-dev \
+    && patch --batch --forward --fuzz=0 -p1 -d /native/sources/p11-kit-0.26.5 < /native/sources/p11-kit-module-soname.patch \
+    && sh /build-tools/build-native-libraries p11kit
+COPY bin/build-mime-backport bin/native-mime-regression.c /build-tools/
+RUN sh /build-tools/build-mime-backport
+COPY bin/package-native-libraries.mjs /build-tools/
+RUN sh /build-tools/build-native-libraries package
+
+FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d
 ARG TARGETARCH
 ARG DEVTUNNEL_VERSION=1.0.2030
 ARG DEVTUNNEL_SHA256
-# Select the packaged session-bus and sysusers providers that do not require
-# a systemd/PAM login stack. Sessions still launch private dbus-daemon/keyrings.
+# Keep private session buses and keyrings, without a systemd/PAM login stack.
+# ICU is supplied by this distribution, not copied from the Debian build stage.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
-    ca-certificates curl dbus-x11 gnome-keyring libicu76 libsecret-1-0 libsecret-tools \
+    ca-certificates curl dbus-x11 gnome-keyring libicu78 libsecret-1-0 libsecret-tools \
     libstdc++6 squid systemd-standalone-sysusers tini util-linux \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --uid 1000 --create-home --shell /usr/sbin/nologin hub \
+    && test "$(id -u ubuntu)" = 1000 && test "$(id -g ubuntu)" = 1000 \
+    && groupmod --new-name hub ubuntu \
+    && usermod --login hub --home /home/hub --move-home --shell /usr/sbin/nologin --comment '' ubuntu \
     && mkdir -p /data /config /run/hub /opt/hub \
     && chown hub:hub /data /run/hub
 RUN case "${TARGETARCH}" in \
@@ -33,6 +59,27 @@ RUN case "${TARGETARCH}" in \
     && find /tmp/devtunnel-check -name devtunnel.deps.json -exec cp '{}' /usr/local/share/devtunnel/devtunnel.deps.json \; \
     && rm -rf /tmp/devtunnel-check \
     && apt-get purge -y --auto-remove curl
+# The base includes an unpackaged Pebble supervisor. Hub uses tini and its own
+# manager; do not retain a second, unused supervisor and its embedded runtime.
+RUN test -f /usr/bin/pebble && test ! -L /usr/bin/pebble \
+    && ! dpkg-query --search /usr/bin/pebble \
+    && rm /usr/bin/pebble
+# Replace Ubuntu's default utility provider using the official GNU packages.
+# The helper validates the exact removal plan before replacing the provider.
+RUN --mount=type=bind,source=bin/use-gnu-coreutils,target=/tmp/use-gnu-coreutils \
+    apt-get update && sh /tmp/use-gnu-coreutils validate-plan \
+    && apt-get install -y --no-install-recommends --allow-remove-essential \
+       coreutils-from-gnu coreutils-from-uutils- rust-coreutils- \
+    && sh /tmp/use-gnu-coreutils verify-installed \
+    && rm -rf /var/lib/apt/lists/*
+RUN --mount=type=bind,from=native,source=/native/debs,target=/native-debs \
+    apt-get update && apt-get install -y --no-install-recommends /native-debs/*.deb \
+    && test -z "$(dpkg --audit)" && rm -rf /var/lib/apt/lists/*
+# Ship matching source archives and the build recipe for license compliance and
+# independent verification of the custom packages, alongside test provenance.
+COPY --from=native /native/evidence/ /usr/local/share/devtunnel/native/evidence/
+COPY --from=native /native/sources/*.tar.xz /native/sources/*.patch /usr/local/share/devtunnel/native/sources/
+COPY bin/build-native-libraries bin/package-native-libraries.mjs bin/build-mime-backport bin/native-mime-regression.c /usr/local/share/devtunnel/native/recipe/
 COPY --from=build /usr/local/bin/node /usr/local/bin/node
 COPY --from=build /build/dist /opt/hub/dist
 COPY --from=build /build/node_modules /opt/hub/node_modules

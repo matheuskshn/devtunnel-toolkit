@@ -1,7 +1,7 @@
 # devtunnel-toolkit-hub
 
 An independent, multi-session Dev Tunnels host with one shared Squid proxy.
-The existing toolkit, Squid, route-proxy and OpenVPN images are unchanged.
+The toolkit, Squid, route-proxy and OpenVPN remain separately built images.
 This directory is the **only build context** for the Hub image.
 
 ## Architecture
@@ -34,12 +34,17 @@ Supply configuration through environment variables or create a JSON file
 docker build -t devtunnel-toolkit-hub:local images/hub
 ```
 
-The image uses a digest-pinned Debian 13 (Trixie) slim base and bundles Node 24 LTS, Squid,
+The image uses a digest-pinned Ubuntu 26.04 LTS base and bundles Node 24 LTS, Squid,
 Dev Tunnels CLI, D-Bus, GNOME Keyring, certificates and tini at build time. It runs
 as UID/GID 1000, without privileged mode, extra capabilities, Docker socket,
 host networking or a VPN device. No packages are installed at startup.
 The CLI version and architecture-specific SHA-256 are checked during build.
 Upstream's moving download URL will fail the build on an unreviewed CLI update.
+Native library sources and patches are checksum-verified, tested and installed
+as registered packages. Their recipe and required source archives are included
+in the image. `Dockerfile.ubuntu` is a compatibility entrypoint with the same
+recipe as `Dockerfile`; a test prevents divergence. Both architectures require
+native build runners for the sanitizer regressions, not QEMU.
 
 ## Session commands
 

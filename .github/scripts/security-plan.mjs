@@ -17,7 +17,12 @@ if (selection.hub)
   });
 const matrix = {
   include: include.flatMap((image) =>
-    ["linux/amd64", "linux/arm64"].map((platform) => ({ ...image, platform })),
+    ["linux/amd64", "linux/arm64"].map((platform) => ({
+      ...image,
+      platform,
+      runner: platform === "linux/arm64" ? "ubuntu-24.04-arm" : "ubuntu-24.04",
+      machine: platform === "linux/arm64" ? "aarch64" : "x86_64",
+    })),
   ),
 };
 appendFileSync(

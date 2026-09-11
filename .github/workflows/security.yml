@@ -69,7 +69,7 @@ jobs:
   images:
     needs: plan
     if: needs.plan.outputs.any == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -79,7 +79,10 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
       - run: bash .github/scripts/install-security-tools.sh "$RUNNER_TEMP/security-tools"
-      - uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+      - name: Require native execution for library memory regressions
+        env:
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+        run: test "$(uname -m)" = "$EXPECTED_MACHINE"
       - name: Build the changed image for scanning
         env:
           BUILD_CONTEXT: ${{ matrix.context }}
