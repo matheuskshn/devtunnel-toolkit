@@ -129,7 +129,18 @@ test("Publication workflows use native runners and preserve PR isolation and rel
     native.jobs.publish.if,
     /inputs.publish.*pull_request.*pull_request_target/,
   );
+  const upload = native.jobs.build.steps.find((s) =>
+    s.uses?.startsWith("actions/upload-artifact@"),
+  );
+  assert.equal(
+    upload.with.name,
+    "native-${{ inputs.image }}--${{ matrix.arch }}",
+  );
   const steps = native.jobs.publish.steps;
+  const download = steps.find((s) =>
+    s.uses?.startsWith("actions/download-artifact@"),
+  );
+  assert.equal(download.with.pattern, "native-${{ inputs.image }}--*");
   const scanIndex = steps.findIndex(
     (s) => s.name === "Scan the exact native digests before tag promotion",
   );
