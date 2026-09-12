@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.0-rc.5](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.4...v0.1.0-rc.5) (2026-09-12)
+
+
+### Features
+
+* **hub:** add secure console and native Ubuntu acceptance ([#16](https://github.com/matheuskshn/devtunnel-toolkit/issues/16)) ([91c4706](https://github.com/matheuskshn/devtunnel-toolkit/commit/91c470615e9f33ca261629dd6cf18ac4ae2b0063))
+
+
+### Bug Fixes
+
+* **ci:** install dependencies before release tests ([#21](https://github.com/matheuskshn/devtunnel-toolkit/issues/21)) ([447f24a](https://github.com/matheuskshn/devtunnel-toolkit/commit/447f24ab87beab2b59b00cb7cf3cdb822105b200))
+
 ## [0.1.0-rc.4](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.3...v0.1.0-rc.4) (2026-09-09)
 
 
