@@ -27,11 +27,11 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: images/hub/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: images/hub
       - run: node .github/scripts/release-policy.mjs
       - run: node --test .github/scripts/*.test.mjs
       - run: bash -n docker/devtunnel-entrypoint images/squid/squid-entrypoint images/tinyproxy/tinyproxy-entrypoint images/openvpn/openvpn-entrypoint
-      - run: npm ci --ignore-scripts
-        working-directory: images/hub
       - run: npm run test:coverage && npm run check:public && npm audit --audit-level=low
         working-directory: images/hub
       - if: inputs.container
