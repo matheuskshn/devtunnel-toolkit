@@ -74,7 +74,7 @@ route-proxy-logs:
 	@$(RUN_ROUTE_PROXY) logs -f route-proxy
 
 vpn: build auth-check
-	@docker compose up openvpn devtunnel devtunnel-renew
+	@docker compose up openvpn openvpn-network devtunnel devtunnel-renew
 
 ovpn-client: build
 	@docker compose run --rm $(TTY) openvpn client

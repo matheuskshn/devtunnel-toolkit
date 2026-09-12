@@ -18,6 +18,16 @@ test('credential encryption authenticates hub/session/generation and supports ex
   assert.equal(unseal(ciphertext,'hub:user-a:1',rotated).toString(),'synthetic-secret');
   assert.throws(()=>credentialKeys({}));assert.throws(()=>credentialKeys({HUB_CREDENTIAL_KEY:'short'}));
 });
+test('credential encryption rejects truncated and oversized GCM authentication tags',()=>{
+  const ring=credentialKeys({HUB_CREDENTIAL_KEY:key()});
+  const ciphertext=seal(Buffer.from('synthetic-secret'),'hub:user-a:1',ring);
+  const envelope=JSON.parse(ciphertext);
+  assert.equal(Buffer.from(envelope.tag,'base64').length,16);
+  for(const length of [0,4,8,12,15,17]) {
+    const changed={...envelope,tag:Buffer.alloc(length).toString('base64')};
+    assert.throws(()=>unseal(Buffer.from(JSON.stringify(changed)),'hub:user-a:1',ring));
+  }
+});
 test('credential packages restore exact bytes and reject traversal, links and overwrites',async t=>{
   const dir=await mkdtemp(path.join(os.tmpdir(),'hub-package-'));t.after(()=>rm(dir,{recursive:true,force:true}));
   const home=path.join(dir,'home'),restored=path.join(dir,'restored');

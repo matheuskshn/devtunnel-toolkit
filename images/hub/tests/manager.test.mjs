@@ -81,3 +81,16 @@ test('only a confirmed missing resource permits recreation with the exact name a
     cli:async()=>JSON.stringify({tunnel:{tunnelId:'devhub-user-a.euw1'}})}),/CLUSTER_CHANGED/);
   assert.equal(s.tunnel_id,'devhub-user-a.use1');
 });
+
+test('web policy requires stopped idle sessions, gates CLI races and rolls back failed persistence',async t=>{
+  const m=await manager(t),s=m.store.add('user-a','github');s.desired=true;
+  await assert.rejects(m.applyPolicy({maxSessions:10},async()=>{}),/STOP_SESSIONS_FIRST/);
+  s.desired=false;m.busy.add(s.id);
+  await assert.rejects(m.applyPolicy({maxSessions:10},async()=>{}),/STOP_SESSIONS_FIRST/);m.busy.clear();
+  let release;const gate=new Promise(r=>release=r);const pending=m.applyPolicy({maxSessions:10},async()=>gate);
+  await assert.rejects(m.dispatch(['session','add','user-b'],()=>{}),/SESSION_BUSY/);
+  release();await pending;assert.equal(m.config.maxSessions,10);
+  await assert.rejects(m.applyPolicy({maxSessions:20},async()=>{throw new HubError('CONFIG_CONFLICT');}),/CONFIG_CONFLICT/);
+  assert.equal(m.config.maxSessions,10);assert.equal(m.changingPolicy,false);
+  await m.dispatch(['session','add','user-b'],()=>{});assert.equal(m.store.state.sessions.length,2);
+});

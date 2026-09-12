@@ -1,0 +1,99 @@
+name: Security gate
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
+      scan-images:
+        type: boolean
+        default: true
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: npm ci --ignore-scripts && npm audit --audit-level=low
+        working-directory: images/hub
+      - run: bash .github/scripts/install-security-tools.sh "$RUNNER_TEMP/security-tools"
+      - name: Scan Git history with redacted findings
+        run: '"$RUNNER_TEMP/security-tools/gitleaks" git --redact --no-banner .'
+      - name: Scan working tree with redacted findings
+        run: '"$RUNNER_TEMP/security-tools/gitleaks" dir --redact --no-banner .'
+      - name: Static code security analysis
+        run: >-
+          docker run --rm --read-only --tmpfs /tmp:mode=1777
+          --user "$(id -u):$(id -g)" --cap-drop ALL --security-opt no-new-privileges
+          --env HOME=/tmp --volume "$PWD:/src:ro" --workdir /src
+          semgrep/semgrep:1.176.1@sha256:34ab619bf1391a24bfda3f05debd0d8a6ce3093c2d5f9d39cfc00f83c1397823
+          semgrep scan --oss-only --config p/security-audit --config p/javascript
+          --metrics off --disable-version-check --error
+          --exclude node_modules --exclude images/hub/dist .
+      - name: Scan source configuration
+        run: >-
+          "$RUNNER_TEMP/security-tools/trivy" fs --scanners misconfig
+          --severity HIGH,CRITICAL --exit-code 1
+          --skip-dirs .git --skip-dirs images/hub/node_modules
+          --skip-dirs images/hub/dist .
+  plan:
+    if: inputs.scan-images || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      any: ${{ steps.plan.outputs.any }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - id: plan
+        env:
+          SECURITY_FULL_SUITE: ${{ inputs.ref != '' }}
+        run: node .github/scripts/security-plan.mjs
+  images:
+    needs: plan
+    if: needs.plan.outputs.any == 'true'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - run: bash .github/scripts/install-security-tools.sh "$RUNNER_TEMP/security-tools"
+      - name: Require native execution for library memory regressions
+        env:
+          EXPECTED_MACHINE: ${{ matrix.machine }}
+        run: test "$(uname -m)" = "$EXPECTED_MACHINE"
+      - name: Build the changed image for scanning
+        env:
+          BUILD_CONTEXT: ${{ matrix.context }}
+          BUILD_FILE: ${{ matrix.dockerfile }}
+          BUILD_PLATFORM: ${{ matrix.platform }}
+        run: docker build --pull --platform "$BUILD_PLATFORM" -f "$BUILD_FILE" -t toolkit-security:local "$BUILD_CONTEXT"
+      - name: Block high and critical vulnerabilities, including unfixed findings
+        env:
+          BUILD_PLATFORM: ${{ matrix.platform }}
+        run: >-
+          "$RUNNER_TEMP/security-tools/trivy" image --scanners vuln
+          --platform "$BUILD_PLATFORM"
+          --severity HIGH,CRITICAL --exit-code 1
+          --timeout 10m toolkit-security:local

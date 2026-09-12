@@ -1,0 +1,25 @@
+#!/bin/sh
+set -eu
+cd /native/sources
+curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 180 \
+  --proto '=https' --tlsv1.2 https://gitlab.gnome.org/GNOME/glib/-/merge_requests/5286.patch -o glib-5286.patch
+printf '%s\n' '54b843438e89a7fc7faf74ea7cd0cd27fc3961a66c138f1387b8753fe9375dfb  glib-5286.patch' | sha256sum -c -
+compile_probe() {
+  cc -g -O1 -fsanitize=address -fno-omit-frame-pointer -ffunction-sections \
+    -Wl,--gc-sections -Iglib-2.88.3/gio/xdgmime \
+    /build-tools/native-mime-regression.c -o /native/mime-regression
+}
+compile_probe
+if ASAN_OPTIONS=detect_leaks=0 /native/mime-regression > /native/evidence/mime-before.log 2>&1; then
+  echo 'Expected the unpatched parser to fail the ASan regression' >&2; exit 1
+fi
+grep -F 'AddressSanitizer: heap-buffer-overflow' /native/evidence/mime-before.log
+patch --batch --forward --fuzz=0 -p1 -d glib-2.88.3 < glib-5286.patch
+compile_probe
+ASAN_OPTIONS=detect_leaks=1 /native/mime-regression > /native/evidence/mime-after.log 2>&1
+cat /native/evidence/mime-after.log
+meson compile -C /native/glib -j 4
+meson test -C /native/glib --no-rebuild --print-errorlogs --num-processes 4 \
+  gvariant gdatetime regex io-channel io-channel-basic keyfile gdbus-auth gdbus-auth-mechanism-sha1 gdbus-introspection contenttype
+DESTDIR=/native/stage meson install -C /native/glib --no-rebuild
+sha256sum *.tar.xz *.patch > /native/evidence/source-sha256.txt

@@ -1,9 +1,18 @@
 # Replace the image reference, storage class and public example policy before use.
 # Keep the resulting environment-specific manifest OUTSIDE this repository.
 apiVersion: v1
+kind: Namespace
+metadata:
+  name: devtunnel-toolkit
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: devtunnel-hub-data
+  namespace: devtunnel-toolkit
 spec:
   accessModes: [ReadWriteOnce]
   resources:
@@ -14,6 +23,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: devtunnel-hub-config
+  namespace: devtunnel-toolkit
 data:
   hub.json: |
     {"hubId":"devhub","allowedDomains":["service.example.com"]}
@@ -22,6 +32,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: devtunnel-hub
+  namespace: devtunnel-toolkit
 spec:
   replicas: 1
   strategy:
@@ -34,41 +45,52 @@ spec:
       labels:
         app: devtunnel-hub
     spec:
+      # The Hub does not call the Kubernetes API.
+      automountServiceAccountToken: false
       terminationGracePeriodSeconds: 30
       securityContext:
+        seccompProfile:
+          type: RuntimeDefault
         runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
+        # The CSI driver must support fsGroup. Existing UID 1000 data requires
+        # an offline, backed-up ownership migration before using this example.
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
       containers:
         - name: hub
-          image: registry.example.com/devtunnel-toolkit-hub:0.1.0
+          # Use a release containing the hub-restricted account, not the old rc.4.
+          image: ghcr.io/matheuskshn/devtunnel-toolkit-hub:replace-with-validated-version
+          env:
+            - { name: HOME, value: /run/hub/home }
           securityContext:
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: [ALL]
           resources:
-            requests: {cpu: 250m, memory: 512Mi}
-            limits: {cpu: "1", memory: 1Gi}
+            requests: { cpu: 250m, memory: 512Mi, ephemeral-storage: 128Mi }
+            limits: { cpu: "1", memory: 1Gi, ephemeral-storage: 512Mi }
           livenessProbe:
-            httpGet: {path: /live, port: 8080}
+            httpGet: { path: /live, port: 8080 }
             initialDelaySeconds: 10
           readinessProbe:
-            httpGet: {path: /ready, port: 8080}
+            httpGet: { path: /ready, port: 8080 }
             initialDelaySeconds: 5
           volumeMounts:
-            - {name: data, mountPath: /data}
-            - {name: config, mountPath: /config, readOnly: true}
-            - {name: runtime, mountPath: /run/hub}
-            - {name: temporary, mountPath: /tmp}
+            - { name: data, mountPath: /data }
+            - { name: config, mountPath: /config, readOnly: true }
+            - { name: runtime, mountPath: /run/hub }
+            - { name: temporary, mountPath: /tmp }
       volumes:
         - name: data
-          persistentVolumeClaim: {claimName: devtunnel-hub-data}
+          persistentVolumeClaim: { claimName: devtunnel-hub-data }
         - name: config
-          configMap: {name: devtunnel-hub-config}
+          configMap: { name: devtunnel-hub-config }
         - name: runtime
-          emptyDir: {medium: Memory}
+          # Memory-backed volumes count toward the container's memory budget.
+          # Size these limits and memory together for the intended session count.
+          emptyDir: { medium: Memory, sizeLimit: 256Mi }
         - name: temporary
-          emptyDir: {medium: Memory}
+          emptyDir: { medium: Memory, sizeLimit: 128Mi }
 # Intentionally no Service, Ingress or externally accessible administration port.

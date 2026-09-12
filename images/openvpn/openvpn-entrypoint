@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 OVPN_DIR="${OVPN_DIR:-/etc/openvpn}"
 EASYRSA_DIR="${OVPN_DIR}/easy-rsa"
@@ -26,7 +27,18 @@ is_true() {
     esac
 }
 
+validate_client_name() {
+    if [[ ! "$1" =~ ^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$ ]]; then
+        printf 'openvpn: client name must contain only letters, digits, underscore or hyphen\n' >&2
+        exit 2
+    fi
+}
+
 ensure_dirs() {
+    if [[ -e "$OVPN_DIR" && ! -O "$OVPN_DIR" ]]; then
+        printf 'openvpn: data directory is not owned by this user; back up and migrate the volume to UID/GID 10001 before starting\n' >&2
+        exit 2
+    fi
     mkdir -p "$OVPN_DIR" "$CLIENTS_DIR"
 }
 
@@ -37,7 +49,12 @@ ensure_pki() {
         return
     fi
 
-    rm -rf "$EASYRSA_DIR"
+    # Never replace existing or partially initialized private keys implicitly.
+    # An operator must recover or move aside a partial PKI before retrying.
+    if [[ -e "$EASYRSA_DIR" || -L "$EASYRSA_DIR" ]]; then
+        printf 'openvpn: incomplete PKI exists; recover it or move it aside before initialization\n' >&2
+        exit 2
+    fi
     make-cadir "$EASYRSA_DIR" >&2
 
     pushd "$EASYRSA_DIR" >/dev/null
@@ -66,7 +83,10 @@ render_server_config() {
             printf 'local %s\n' "$OVPN_LISTEN_ADDRESS"
         fi
         printf 'proto %s\n' "$proto"
-        printf 'dev tun\n'
+        printf 'dev tun0\n'
+        printf 'disable-dco\n'
+        printf 'ifconfig-noexec\n'
+        printf 'route-noexec\n'
         printf 'topology subnet\n'
         printf 'server %s %s\n' "$OVPN_NETWORK" "$OVPN_NETMASK"
         printf 'ifconfig-pool-persist %s/ipp.txt\n' "$OVPN_DIR"
@@ -81,8 +101,6 @@ render_server_config() {
         printf 'keepalive 10 120\n'
         printf 'persist-key\n'
         printf 'persist-tun\n'
-        printf 'user nobody\n'
-        printf 'group nogroup\n'
         printf 'verb 3\n'
 
         if is_true "$OVPN_REDIRECT_GATEWAY"; then
@@ -116,17 +134,79 @@ render_server_config() {
 }
 
 setup_networking() {
-    sysctl -w net.ipv4.ip_forward=1 >/dev/null || true
-
-    if iptables -t nat -C POSTROUTING -s "$OVPN_CIDR" -j MASQUERADE 2>/dev/null; then
-        return
+    if [[ "$(id -u)" != 0 ]]; then
+        printf 'openvpn: prepare-network requires an isolated initializer with UID 0 and NET_ADMIN\n' >&2
+        exit 2
+    fi
+    network_parameters
+    # Configure forwarding through the container runtime, never by modifying
+    # the host network namespace. The bundled Compose sets this namespaced sysctl.
+    if [[ "$(</proc/sys/net/ipv4/ip_forward)" != 1 ]]; then
+        printf 'openvpn: IPv4 forwarding is disabled; start with --sysctl net.ipv4.ip_forward=1 in a private network namespace\n' >&2
+        exit 2
     fi
 
-    iptables -t nat -A POSTROUTING -s "$OVPN_CIDR" -j MASQUERADE
+    if ip link show dev tun0 >/dev/null 2>&1; then
+        if ! ip tuntap show dev tun0 | grep -Eq '^tun0: tun .*user 10001 group 10001( |$)'; then
+            printf 'openvpn: refusing to modify a pre-existing interface not owned by the VPN user\n' >&2
+            exit 2
+        fi
+    else
+        ip tuntap add dev tun0 mode tun user 10001 group 10001
+    fi
+    ip address replace "$OVPN_SERVER_ADDRESS/$OVPN_PREFIX" dev tun0
+    ip link set dev tun0 up
+    if ! iptables -t nat -C POSTROUTING -s "$OVPN_CIDR" -j MASQUERADE 2>/dev/null; then
+        iptables -t nat -A POSTROUTING -s "$OVPN_CIDR" -j MASQUERADE
+    fi
+    printf 'openvpn: private network prepared for UID/GID 10001\n'
+}
+
+ipv4_number() {
+    local part value=0
+    [[ "$1" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || return 1
+    local -a octets
+    IFS=. read -ra octets <<< "$1"
+    for part in "${octets[@]}"; do
+        (( 10#$part <= 255 )) || return 1
+        value=$(( (value << 8) | 10#$part ))
+    done
+    printf '%s' "$value"
+}
+
+network_parameters() {
+    local address mask expected_mask
+    if [[ ! "$OVPN_CIDR" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}/([89]|[12][0-9]|30)$ ]]; then
+        printf 'openvpn: expected an IPv4 VPN CIDR with prefix 8..30\n' >&2; exit 2
+    fi
+    OVPN_PREFIX="${OVPN_CIDR##*/}"
+    address=$(ipv4_number "${OVPN_CIDR%/*}") || { echo 'openvpn: invalid CIDR address' >&2; exit 2; }
+    mask=$(( (0xffffffff << (32 - OVPN_PREFIX)) & 0xffffffff ))
+    expected_mask=$(ipv4_number "$OVPN_NETMASK") || { echo 'openvpn: invalid netmask' >&2; exit 2; }
+    if [[ "${OVPN_CIDR%/*}" != "$OVPN_NETWORK" ]] || (( (address & mask) != address || mask != expected_mask )); then
+        printf 'openvpn: OVPN_NETWORK, OVPN_NETMASK and OVPN_CIDR must describe the same aligned subnet\n' >&2; exit 2
+    fi
+    address=$((address + 1))
+    printf -v OVPN_SERVER_ADDRESS '%d.%d.%d.%d' "$((address >> 24))" "$((address >> 16 & 255))" "$((address >> 8 & 255))" "$((address & 255))"
+}
+
+wait_for_network() {
+    network_parameters
+    local wait_seconds="${OVPN_NETWORK_WAIT_SECONDS:-60}" attempt
+    [[ "$wait_seconds" =~ ^([0-9]|[1-9][0-9]|[12][0-9][0-9]|300)$ ]] || { echo 'openvpn: invalid network wait (0..300)' >&2; exit 2; }
+    for ((attempt=0; attempt<=wait_seconds; attempt++)); do
+        if ip -4 -o address show dev tun0 2>/dev/null | grep -Fq " inet $OVPN_SERVER_ADDRESS/$OVPN_PREFIX "; then
+            return
+        fi
+        (( attempt == wait_seconds )) || sleep 1
+    done
+    printf 'openvpn: private TUN is not prepared; run prepare-network in the same network namespace\n' >&2
+    exit 2
 }
 
 ensure_client() {
     local client_name="${1:-$OVPN_CLIENT_NAME}"
+    validate_client_name "$client_name"
 
     ensure_pki
 
@@ -180,12 +260,39 @@ render_client_config() {
 }
 
 case "${1:-server}" in
+    healthcheck)
+        [[ "$OVPN_PORT" =~ ^[0-9]{1,5}$ ]] && (( 10#$OVPN_PORT >= 1 && 10#$OVPN_PORT <= 65535 )) || exit 1
+        ip -4 address show dev tun0 | grep -q 'inet ' || exit 1
+        case "$OVPN_PROTO" in
+            udp) ss -H -lun "sport = :$OVPN_PORT" ;;
+            tcp) ss -H -ltn "sport = :$OVPN_PORT" ;;
+            *) exit 1 ;;
+        esac | grep -q .
+        ;;
     server)
+        if [[ "$(id -u)" != 10001 || "$(id -g)" != 10001 ]]; then
+            printf 'openvpn: server must run as UID/GID 10001, never root\n' >&2; exit 2
+        fi
+        if ! grep -Eq '^CapEff:[[:space:]]+0+$' /proc/self/status || ! grep -Eq '^NoNewPrivs:[[:space:]]+1$' /proc/self/status; then
+            printf 'openvpn: server requires cap-drop ALL and no-new-privileges\n' >&2; exit 2
+        fi
+        validate_client_name "$OVPN_CLIENT_NAME"
         ensure_pki
         ensure_client "$OVPN_CLIENT_NAME"
         render_server_config
-        setup_networking
+        wait_for_network
         exec openvpn --config "${OVPN_DIR}/server.conf"
+        ;;
+    prepare-network)
+        setup_networking
+        ;;
+    network)
+        setup_networking
+        # Keep the private namespace alive, but discard every bootstrap privilege.
+        # This command must be PID 1 (Compose overrides the normal tini entrypoint).
+        exec setpriv --reuid=10001 --regid=10001 --clear-groups \
+            --bounding-set=-all --inh-caps=-all --ambient-caps=-all \
+            --no-new-privs sleep infinity
         ;;
     client|client-config|ovpn)
         client_name="${2:-$OVPN_CLIENT_NAME}"

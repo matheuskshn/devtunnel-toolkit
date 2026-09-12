@@ -1,0 +1,22 @@
+--- a/p11-kit/meson.build
++++ b/p11-kit/meson.build
+@@ -182,7 +182,7 @@
+                 name_suffix: module_suffix,
+                 include_directories: [configinc, commoninc],
+                 dependencies: dlopen_deps,
+-                link_args: p11_module_ldflags,
++                link_args: p11_module_ldflags + ['-Wl,-soname,p11-kit-client.so'],
+                 link_depends: [p11_module_symbol_map],
+                 link_with: [libp11_kit_internal],
+                 install: true,
+--- a/trust/meson.build
++++ b/trust/meson.build
+@@ -33,7 +33,7 @@
+               name_prefix: '',
+               c_args: p11_kit_trust_c_args,
+               dependencies: [libp11_library_dep] + libp11_asn1_deps + dlopen_deps,
+-              link_args: p11_module_ldflags,
++              link_args: p11_module_ldflags + ['-Wl,-soname,p11-kit-trust.so'],
+               link_depends: [p11_module_symbol_map],
+               link_with: libtrust_data,
+               install: true,

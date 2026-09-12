@@ -27,3 +27,24 @@ updates:
       interval: "weekly"
     labels:
       - "dependencies"
+
+  - package-ecosystem: "docker"
+    directory: "/images/tinyproxy"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "docker"
+    directory: "/images/hub"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"
+
+  - package-ecosystem: "npm"
+    directory: "/images/hub"
+    schedule:
+      interval: "weekly"
+    labels:
+      - "dependencies"

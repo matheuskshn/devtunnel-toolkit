@@ -4,8 +4,8 @@ services:
   route-proxy:
     image: ${ROUTE_PROXY_IMAGE:-devtunnel-toolkit-route-proxy:local}
     build:
-      context: images/tinyproxy
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: images/tinyproxy/Dockerfile
     network_mode: host
     environment:
       ROUTE_PROXY_LISTEN_ADDRESS: "${ROUTE_PROXY_LISTEN_ADDRESS:-127.0.0.1}"

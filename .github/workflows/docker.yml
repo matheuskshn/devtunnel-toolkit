@@ -11,103 +11,31 @@ on:
 
 permissions:
   contents: read
-  packages: write
-  attestations: write
-  id-token: write
 
 concurrency:
   group: docker-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-  DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-  DOCKERHUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
-
 jobs:
+  security:
+    uses: ./.github/workflows/security.yml
   changes:
     uses: ./.github/workflows/image-changes.yml
     permissions:
       contents: read
   build:
-    needs: changes
+    needs: [changes, security]
+    permissions:
+      contents: read
+      packages: write
     if: needs.changes.outputs.legacy == 'true'
     name: Build ${{ matrix.title }}
-    runs-on: ubuntu-latest
-
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Resolve image names
-        id: images
-        shell: bash
-        run: |
-          owner="${GITHUB_REPOSITORY_OWNER,,}"
-          dockerhub_namespace="${DOCKERHUB_NAMESPACE:-$DOCKERHUB_USERNAME}"
-          dockerhub_namespace="${dockerhub_namespace,,}"
-
-          {
-            echo "images<<EOF"
-            echo "ghcr.io/${owner}/${{ matrix.image }}"
-            if [[ -n "$DOCKERHUB_USERNAME" && -n "$DOCKERHUB_TOKEN" && -n "$dockerhub_namespace" ]]; then
-              echo "docker.io/${dockerhub_namespace}/${{ matrix.image }}"
-            fi
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Docker metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ steps.images.outputs.images }}
-          flavor: |
-            latest=false
-          tags: |
-            type=raw,value=edge,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
-            type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
-            type=raw,value=sha-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-            type=ref,event=pr
-          labels: |
-            org.opencontainers.image.title=${{ matrix.image }}
-            org.opencontainers.image.description=${{ matrix.description }}
-
-      - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Login to Docker Hub
-        if: github.event_name != 'pull_request' && env.DOCKERHUB_USERNAME != '' && env.DOCKERHUB_TOKEN != ''
-        uses: docker/login-action@v4
-        with:
-          username: ${{ env.DOCKERHUB_USERNAME }}
-          password: ${{ env.DOCKERHUB_TOKEN }}
-
-      - name: Build and publish image
-        uses: docker/build-push-action@v7
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          annotations: ${{ steps.meta.outputs.annotations }}
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
-          provenance: true
-          sbom: true
+    uses: ./.github/workflows/native-image.yml
+    with:
+      image: ${{ matrix.image }}
+      ref: ${{ github.sha }}
+      publish: ${{ github.event_name != 'pull_request' }}
+    secrets: inherit

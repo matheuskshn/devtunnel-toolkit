@@ -12,6 +12,17 @@ ssl_ports="${SQUID_SSL_PORTS:-443 563 22}"
 safe_ports="${SQUID_SAFE_PORTS:-80 21 22 443 70 210 1025-65535 280 488 591 777}"
 extra_config="${SQUID_EXTRA_CONFIG:-}"
 
+if [[ ( ! "$listen_address" =~ ^[A-Za-z0-9.:-]*$ && ! "$listen_address" =~ ^\[[A-Fa-f0-9:]+\]$ ) || ! "$visible_hostname" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]]; then
+    echo "Invalid Squid listen address or visible hostname" >&2
+    exit 2
+fi
+for port_list in "$ssl_ports" "$safe_ports"; do
+    if [[ ! "$port_list" =~ ^[0-9[:space:]-]+$ || "$port_list" == *$'\n'* || "$port_list" == *$'\r'* ]]; then
+        echo "Squid port lists must contain space-separated ports or ranges" >&2
+        exit 2
+    fi
+done
+
 if [[ ! "$http_port" =~ ^[0-9]+$ || "$http_port" -lt 1 || "$http_port" -gt 65535 ]]; then
     echo "SQUID_HTTP_PORT must be between 1 and 65535" >&2
     exit 2

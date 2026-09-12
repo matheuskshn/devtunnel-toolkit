@@ -23,7 +23,7 @@ export function credentialKeys(env: NodeJS.ProcessEnv): CredentialKeys {
 }
 export function seal(data: Buffer, context: string, ring: CredentialKeys): Buffer {
   check(data.length <= limit, 'CREDENTIAL_PACKAGE_TOO_LARGE');
-  const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', ring.keys[ring.active], iv);
+  const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', ring.keys[ring.active], iv, {authTagLength:16});
   cipher.setAAD(Buffer.from(`${context}:${ring.active}`));
   const ciphertext = Buffer.concat([cipher.update(data), cipher.final()]);
   return Buffer.from(JSON.stringify({v:1, key:ring.active, iv:iv.toString('base64'),
@@ -36,7 +36,7 @@ export function unseal(encrypted: Buffer, context: string, ring: CredentialKeys)
     check(value.v === 1 && Object.hasOwn(ring.keys, value.key), 'CREDENTIAL_KEY_UNAVAILABLE');
     const iv = Buffer.from(value.iv, 'base64'), tag = Buffer.from(value.tag, 'base64');
     check(iv.length === 12 && tag.length === 16, 'INVALID_CREDENTIAL_PACKAGE');
-    const cipher = createDecipheriv('aes-256-gcm', ring.keys[value.key], iv);
+    const cipher = createDecipheriv('aes-256-gcm', ring.keys[value.key], iv, {authTagLength:16});
     cipher.setAAD(Buffer.from(`${context}:${value.key}`)); cipher.setAuthTag(tag);
     const result = Buffer.concat([cipher.update(Buffer.from(value.data, 'base64')), cipher.final()]);
     check(result.length <= limit, 'CREDENTIAL_PACKAGE_TOO_LARGE'); return result;

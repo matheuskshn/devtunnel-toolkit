@@ -3,6 +3,9 @@
 
 http_port {{SQUID_HTTP_PORT}}
 visible_hostname {{SQUID_VISIBLE_HOSTNAME}}
+pid_filename /tmp/squid.pid
+icp_port 0
+htcp_port 0
 
 acl SSL_ports port {{SQUID_SSL_PORTS}}
 
