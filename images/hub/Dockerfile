@@ -24,11 +24,12 @@ RUN sh /build-tools/build-native-libraries expat
 RUN sh /build-tools/build-native-libraries glib
 COPY bin/p11-kit-module-soname.patch /native/sources/
 RUN apt-get install -y --no-install-recommends systemd-dev \
-    && patch --batch --forward --fuzz=0 -p1 -d /native/sources/p11-kit-0.26.5 < /native/sources/p11-kit-module-soname.patch \
+    && patch --batch --forward --fuzz=0 -p1 -d /native/sources/p11-kit-0.26.5 \
+       < /native/sources/p11-kit-module-soname.patch \
     && sh /build-tools/build-native-libraries p11kit
 COPY bin/build-mime-backport bin/native-mime-regression.c /build-tools/
 RUN sh /build-tools/build-mime-backport
-COPY bin/package-native-libraries.mjs /build-tools/
+COPY bin/package-native-libraries.mjs bin/native-metadata.mjs /build-tools/
 RUN sh /build-tools/build-native-libraries package
 
 FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d
@@ -44,19 +45,25 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     && test "$(id -u ubuntu)" = 1000 && test "$(id -g ubuntu)" = 1000 \
     && groupmod --new-name hub ubuntu \
     && usermod --login hub --home /home/hub --move-home --shell /usr/sbin/nologin --comment '' ubuntu \
+    && groupadd --gid 10001 hub-restricted \
+    && useradd --uid 10001 --gid hub-restricted --no-create-home \
+       --home-dir /run/hub/home --shell /usr/sbin/nologin hub-restricted \
     && mkdir -p /data /config /run/hub /opt/hub \
     && chown hub:hub /data /run/hub
 RUN case "${TARGETARCH}" in \
       amd64) hub_arch=x64; hub_checksum=ff6911548907b5abaea4ed5baa36b2420be7c5debcb637a4f50f7a4002b10b60 ;; \
       arm64) hub_arch=arm64; hub_checksum=f7a76e0117a3e8d5bfbf9416e3480cdac36c2b4bb10d2683f0780dc9284b642f ;; \
       *) exit 1 ;; esac \
-    && curl --silent --show-error --fail --location --retry 3 --connect-timeout 15 --max-time 180 --proto '=https' --tlsv1.2 \
+    && curl --silent --show-error --fail --location \
+       --retry 3 --connect-timeout 15 --max-time 180 --proto '=https' --tlsv1.2 \
        "https://tunnelsassetsprod.blob.core.windows.net/cli/linux-${hub_arch}-devtunnel" -o /usr/local/bin/devtunnel \
     && echo "${DEVTUNNEL_SHA256:-$hub_checksum}  /usr/local/bin/devtunnel" | sha256sum -c - \
     && chmod 755 /usr/local/bin/devtunnel \
-    && DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp/devtunnel-check /usr/local/bin/devtunnel --version | grep -F "${DEVTUNNEL_VERSION}" \
+    && DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp/devtunnel-check /usr/local/bin/devtunnel --version \
+       | grep -F "${DEVTUNNEL_VERSION}" \
     && mkdir -p /usr/local/share/devtunnel \
-    && find /tmp/devtunnel-check -name devtunnel.deps.json -exec cp '{}' /usr/local/share/devtunnel/devtunnel.deps.json \; \
+    && find /tmp/devtunnel-check -name devtunnel.deps.json \
+       -exec cp '{}' /usr/local/share/devtunnel/devtunnel.deps.json \; \
     && rm -rf /tmp/devtunnel-check \
     && apt-get purge -y --auto-remove curl
 # The base includes an unpackaged Pebble supervisor. Hub uses tini and its own
@@ -79,7 +86,7 @@ RUN --mount=type=bind,from=native,source=/native/debs,target=/native-debs \
 # independent verification of the custom packages, alongside test provenance.
 COPY --from=native /native/evidence/ /usr/local/share/devtunnel/native/evidence/
 COPY --from=native /native/sources/*.tar.xz /native/sources/*.patch /usr/local/share/devtunnel/native/sources/
-COPY bin/build-native-libraries bin/package-native-libraries.mjs bin/build-mime-backport bin/native-mime-regression.c /usr/local/share/devtunnel/native/recipe/
+COPY bin/build-native-libraries bin/package-native-libraries.mjs bin/native-metadata.mjs bin/build-mime-backport bin/native-mime-regression.c /usr/local/share/devtunnel/native/recipe/
 COPY --from=build /usr/local/bin/node /usr/local/bin/node
 COPY --from=build /build/dist /opt/hub/dist
 COPY --from=build /build/node_modules /opt/hub/node_modules

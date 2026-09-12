@@ -260,6 +260,15 @@ render_client_config() {
 }
 
 case "${1:-server}" in
+    healthcheck)
+        [[ "$OVPN_PORT" =~ ^[0-9]{1,5}$ ]] && (( 10#$OVPN_PORT >= 1 && 10#$OVPN_PORT <= 65535 )) || exit 1
+        ip -4 address show dev tun0 | grep -q 'inet ' || exit 1
+        case "$OVPN_PROTO" in
+            udp) ss -H -lun "sport = :$OVPN_PORT" ;;
+            tcp) ss -H -ltn "sport = :$OVPN_PORT" ;;
+            *) exit 1 ;;
+        esac | grep -q .
+        ;;
     server)
         if [[ "$(id -u)" != 10001 || "$(id -g)" != 10001 ]]; then
             printf 'openvpn: server must run as UID/GID 10001, never root\n' >&2; exit 2

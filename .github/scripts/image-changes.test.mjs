@@ -38,6 +38,7 @@ test("shared runtime inputs select all consumers, native libraries select toolki
     "build-mime-backport",
     "native-mime-regression.c",
     "package-native-libraries.mjs",
+    "native-metadata.mjs",
     "p11-kit-module-soname.patch",
   ]) {
     const result = selectImages([`images/hub/bin/${file}`]);

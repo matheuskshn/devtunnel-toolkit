@@ -143,10 +143,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - >-
-          ip addr show tun0 >/dev/null 2>&1 &&
-          { if [ "$${OVPN_PROTO}" = udp ]; then ss -lun; else ss -ltn; fi; }
-          | grep -q ":$${OVPN_PORT} "
+        - /usr/local/bin/openvpn-entrypoint healthcheck
       interval: 30s
       timeout: 5s
       retries: 3

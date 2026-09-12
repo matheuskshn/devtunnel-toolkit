@@ -11,7 +11,10 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { parse } from "../../images/hub/node_modules/yaml/dist/index.js";
+import {
+  parse,
+  parseAllDocuments,
+} from "../../images/hub/node_modules/yaml/dist/index.js";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const run = (script, args = [], extra = {}) =>
@@ -19,6 +22,45 @@ const run = (script, args = [], extra = {}) =>
     encoding: "utf8",
     env: { PATH: "/usr/bin:/bin", ...extra },
   });
+
+test("every image has a runtime healthcheck and legacy probes fail closed before startup", async () => {
+  for (const file of [
+    "Dockerfile",
+    "images/hub/Dockerfile",
+    "images/squid/Dockerfile",
+    "images/tinyproxy/Dockerfile",
+    "images/openvpn/Dockerfile",
+  ])
+    assert.match(
+      await readFile(path.join(root, file), "utf8"),
+      /^HEALTHCHECK .*CMD /m,
+    );
+  const dir = await mkdtemp(path.join(tmpdir(), "toolkit-probe-"));
+  try {
+    assert.notEqual(
+      run("docker/devtunnel-entrypoint", ["healthcheck"], {
+        XDG_RUNTIME_DIR: dir,
+      }).status,
+      0,
+    );
+    for (const port of ["0", "65536", "bad", "9; exit 0", "999999999999999999"])
+      assert.notEqual(
+        run("images/tinyproxy/tinyproxy-entrypoint", ["healthcheck"], {
+          ROUTE_PROXY_PORT: port,
+        }).status,
+        0,
+      );
+    for (const port of ["0", "65536", "bad", "999999999999999999"])
+      assert.notEqual(
+        run("images/openvpn/openvpn-entrypoint", ["healthcheck"], {
+          OVPN_PORT: port,
+        }).status,
+        0,
+      );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 test("OpenVPN refuses to destroy an incomplete PKI", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "toolkit-pki-"));
@@ -97,17 +139,24 @@ test("Kubernetes example disables API credentials and bounds disk and memory-bac
     path.join(root, "images/hub/examples/kubernetes/hub.yaml"),
     "utf8",
   );
-  assert.match(manifest, /automountServiceAccountToken: false/);
-  assert.match(
-    manifest,
-    /requests: \{cpu: 250m, memory: 512Mi, ephemeral-storage: 128Mi\}/,
-  );
-  assert.match(
-    manifest,
-    /limits: \{cpu: "1", memory: 1Gi, ephemeral-storage: 512Mi\}/,
-  );
-  assert.match(manifest, /emptyDir: \{medium: Memory, sizeLimit: 256Mi\}/);
-  assert.match(manifest, /emptyDir: \{medium: Memory, sizeLimit: 128Mi\}/);
+  const documents = parseAllDocuments(manifest);
+  for (const document of documents) assert.deepEqual(document.errors, []);
+  const pod = documents
+    .map((d) => d.toJS())
+    .find((d) => d.kind === "Deployment").spec.template.spec;
+  assert.equal(pod.automountServiceAccountToken, false);
+  assert.deepEqual(pod.containers[0].resources, {
+    requests: { cpu: "250m", memory: "512Mi", "ephemeral-storage": "128Mi" },
+    limits: { cpu: "1", memory: "1Gi", "ephemeral-storage": "512Mi" },
+  });
+  assert.deepEqual(pod.volumes.find((v) => v.name === "runtime").emptyDir, {
+    medium: "Memory",
+    sizeLimit: "256Mi",
+  });
+  assert.deepEqual(pod.volumes.find((v) => v.name === "temporary").emptyDir, {
+    medium: "Memory",
+    sizeLimit: "128Mi",
+  });
 });
 
 test("OpenVPN Compose confines network administration and drops unnecessary privileges", async () => {

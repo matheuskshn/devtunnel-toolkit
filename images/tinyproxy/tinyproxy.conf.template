@@ -8,6 +8,7 @@ Port {{ROUTE_PROXY_PORT}}
 Listen {{ROUTE_PROXY_LISTEN_ADDRESS}}
 Timeout 600
 MaxClients 100
+StatHost "health.toolkit.invalid"
 
 PidFile "/run/tinyproxy/tinyproxy.pid"
 LogLevel Warning

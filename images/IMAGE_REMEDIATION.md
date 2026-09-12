@@ -1,9 +1,12 @@
 # Remediação das imagens
 
-Validação local AMD64 de 2026-09-11. A implementação e a integração local foram
-verificadas; a aceitação do novo conjunto no CI nativo e a publicação ainda não
-foram executadas. Não interpretar aprovação do filtro HIGH/CRITICAL como ausência de
-vulnerabilidades.
+Atualização: 2026-09-12. O commit `98edfee` passou no CI nativo AMD64/ARM64,
+com 44 checks aprovados e publicação desabilitada no PR. O delta posterior de
+healthcheck, conta Kubernetes e manutenção foi validado localmente; exige novo
+CI no commit definitivo. Publicação ainda pendente. Os riscos residuais foram
+aceitos exclusivamente para a próxima RC, sem alterar os resultados dos scanners.
+Não interpretar o filtro HIGH/CRITICAL como ausência de vulnerabilidades. Veja a
+[revisão atual](../SECURITY_REVIEW.md).
 
 ## Alterações
 
@@ -41,21 +44,21 @@ As correções próprias de bibliotecas têm evidência separada na
 As colunas MEDIUM e LOW contam ocorrências por pacote. Não foram usados VEX,
 supressões nem `--ignore-unfixed`.
 
-| Imagem local | HIGH/CRITICAL | CVEs distintos | Ocorrências | MEDIUM | LOW |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Toolkit | 0 | 45 | 58 | 44 | 14 |
-| Squid | 0 | 7 | 13 | 6 | 7 |
-| Tinyproxy | 0 | 5 | 9 | 5 | 4 |
-| OpenVPN | 0 | 7 | 11 | 5 | 6 |
-| Hub padrão Ubuntu | 0 | 46 | 60 | 44 | 16 |
+| Imagem local      | HIGH/CRITICAL | CVEs distintos | Ocorrências | MEDIUM | LOW |
+| ----------------- | ------------: | -------------: | ----------: | -----: | --: |
+| Toolkit           |             0 |             47 |          61 |     47 |  14 |
+| Squid             |             0 |              8 |          14 |      7 |   7 |
+| Tinyproxy         |             0 |              6 |          10 |      6 |   4 |
+| OpenVPN           |             0 |              8 |          12 |      6 |   6 |
+| Hub padrão Ubuntu |             0 |             48 |          63 |     47 |  16 |
 
-Identificadores locais das imagens examinadas, não referências publicadas:
+Identificadores locais dos builds revalidados em 2026-09-12, não referências publicadas:
 
-- Toolkit: `sha256:a9962fd1f04772d24564db7aa27941ee87ac7604f92a3f773002890936af544f`.
+- Toolkit: `sha256:86e1dfcaa80375fc373bdfbf5daef18dba12fbc9bbb892e3c365a3d6b29da0e9`.
 - Squid: `sha256:6ebb7c4c66e7178bab7275c07aea957863781f3a9bdb055faa2790b3bc32061b`.
-- Tinyproxy: `sha256:365fe4fc6f518918ffcc018a1287824df59407572294aefba6a9e78400a51de6`.
-- OpenVPN: `sha256:e1e60c3bf2a29ced445ab76a87474be30e1b5171856ed67f620565d484dbfccf`.
-- Hub padrão: `sha256:f92c243ab04678eae14a72627ac43ec3f041329dcaafeb9828ed6d386e3d60b2`.
+- Tinyproxy: `sha256:ab94c21dedf0d8f257ed15afbeb13894dadc7200a7a4e8c6954c38900b12e108`.
+- OpenVPN: `sha256:fecd216e383fa9427a039ab59ffecf4a9dbbc793d21ab120350d8127d2d2e175`.
+- Hub padrão: `sha256:6cb28985f836788314ee3b82294407699f4f6f505d1927848a63c77f11a9e72d`.
 
 ## Validação funcional
 
@@ -76,14 +79,14 @@ Identificadores locais das imagens examinadas, não referências publicadas:
 - Hub padrão: HTTP/SOCKS5, console, arquivos e PostgreSQL, incluindo recuperação
   após SIGKILL, persistência, isolamento, perda de ownership e falha fechada.
   Probes contra Expat, GLib e libelf instalados também aprovados.
-- 196 testes automatizados aprovados, incluindo contratos de versão, seleção,
+- 205 testes automatizados aprovados, incluindo contratos de versão, seleção,
   políticas de publicação, identidade dos manifests e falhas de registry.
   Sintaxe do Compose e Actionlint aprovados. Semgrep 1.176.1: zero achados em
   119 arquivos com 107 regras; uma execução explícita também cobriu os novos
   scripts de publicação sem depender da seleção de arquivos do Git.
 - `npm audit`: zero vulnerabilidades conhecidas. Gitleaks 8.30.1: zero achados
   na árvore de trabalho. O verificador de conteúdo público e a revisão de
-  marcadores internos dos 37 arquivos alterados também passaram.
+  marcadores internos dos 48 arquivos alterados também passaram.
 
 Os builds legados agora usam `docker build -f images/<imagem>/Dockerfile .`.
 O Toolkit usa `docker build -f Dockerfile .`; o Hub usa
@@ -110,22 +113,31 @@ recuperação do namespace exige recriar os dois serviços juntos. Reinícios
 automáticos do Docker não propagam a operação aos dependentes do Compose.
 O [README](../README.md) descreve a operação e seus limites.
 
-A varredura completa de configuração ainda registra:
+DS-0026 foi corrigido nas três imagens: Toolkit verifica CLI e Secret Service;
+Tinyproxy responde pelo endpoint `StatHost` interno; OpenVPN verifica TUN e o
+socket configurado, compartilhando o probe com o Compose. Os testes incluem
+falhas de serviço/porta. O keeper de rede continua com seu probe próprio.
+Comandos de execução única terminam normalmente; o healthcheck não os transforma
+em serviços nem comprova acesso remoto.
 
-- DS-0026, LOW: ausência de `HEALTHCHECK` nos Dockerfiles Toolkit, Tinyproxy e
-  OpenVPN. O servidor OpenVPN tem probe no Compose; a imagem Toolkit
-  também atende comandos interativos e de execução única. Esses avisos não
-  foram suprimidos nem tratados como corrigidos.
-- No exemplo Kubernetes: KSV-0020/KSV-0021 (UID/GID), KSV-0110 (namespace), todos
-  LOW, e KSV-0125 (restrição de registry), MEDIUM. Não são alertas de Dockerfile.
+KSV-0020/KSV-0021 e KSV-0110 foram corrigidos no exemplo Kubernetes. A conta
+10001 existe na imagem para permitir a inicialização do D-Bus. Mantém-se o
+usuário padrão 1000 para compatibilidade com instalações existentes. O smoke
+local também passou com UID/GID 10001, raiz somente leitura, zero capabilities,
+duas sessões, keyrings/D-Bus, HTTP/SOCKS5, locking, persistência e reinício.
+O teste simula fsGroup num volume novo; não valida um cluster ou driver CSI real.
+
+Permanece KSV-0125, MEDIUM: a lista padrão do Trivy não inclui GHCR. O exemplo
+usa o repositório público real; a política de confiança/admissão deve ser definida
+por cada implantação. Não há supressão ou registry fictício para aprovar o check.
 
 Antes da publicação:
 
-1. Revisar o diff público e autorizar commit/push. Nenhuma publicação ou
-   implantação foi feita durante esta continuação local.
-2. Executar a aceitação nativa do novo conjunto AMD64/ARM64 e repetir todos os
-   gates no commit final. A aceitação nativa anterior do Hub não valida
-   automaticamente estas novas imagens legadas.
+1. Aceite explícito dos riscos residuais registrado para a próxima RC; o Sonar
+   permanece `ERROR` e os achados não foram marcados como corrigidos.
+2. Revisar o diff público, fazer commit/push e repetir os gates nativos no
+   commit definitivo. O CI de `98edfee` já passou para o conjunto de imagens,
+   mas não cobre alterações posteriores.
 3. Verificar a união real de manifests, a extração de attestations e a cópia
    preservando digests em CI. Os testes locais simulam falhas dessas operações;
    não substituem uma publicação real.
@@ -151,7 +163,8 @@ Com Buildx 0.36.1, Distribution 3.1.1 e Skopeo 1.22.2:
 - Manifests reais sem uma arquitetura ou sem attestation foram recusados pelos
   validadores utilizados na publicação.
 
-Os 196 testes automatizados foram repetidos com sucesso, assim como Actionlint
+Na rodada de registry local, os 196 testes automatizados foram repetidos com sucesso, assim como Actionlint
 e a verificação de whitespace. Essa validação reduz a lacuna de empacotamento;
-permanecem pendentes os runners nativos do novo conjunto, as permissões reais
-de GHCR/Docker Hub e a execução completa dos workflows no commit final.
+o CI nativo do conjunto em `98edfee` também passou. Permanecem pendentes as
+permissões reais de publicação em GHCR/Docker Hub, a promoção da RC e a repetição
+dos workflows no próximo commit. O teste local não publicou nesses registries.

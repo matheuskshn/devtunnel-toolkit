@@ -16,11 +16,12 @@ RUN sh /build-tools/build-native-libraries expat
 RUN sh /build-tools/build-native-libraries glib
 COPY images/hub/bin/p11-kit-module-soname.patch /native/sources/
 RUN apt-get install -y --no-install-recommends systemd-dev \
-    && patch --batch --forward --fuzz=0 -p1 -d /native/sources/p11-kit-0.26.5 < /native/sources/p11-kit-module-soname.patch \
+    && patch --batch --forward --fuzz=0 -p1 -d /native/sources/p11-kit-0.26.5 \
+       < /native/sources/p11-kit-module-soname.patch \
     && sh /build-tools/build-native-libraries p11kit
 COPY images/hub/bin/build-mime-backport images/hub/bin/native-mime-regression.c /build-tools/
 RUN sh /build-tools/build-mime-backport
-COPY images/hub/bin/package-native-libraries.mjs /build-tools/
+COPY images/hub/bin/package-native-libraries.mjs images/hub/bin/native-metadata.mjs /build-tools/
 RUN sh /build-tools/build-native-libraries package
 
 FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d
@@ -56,14 +57,16 @@ RUN set -eux; \
         *) echo "Unsupported TARGETARCH: ${TARGETARCH:-unknown}" >&2; exit 1 ;; \
     esac; \
     test "$DEVTUNNEL_ENV" = prod || test -n "$DEVTUNNEL_SHA256"; \
-    curl --fail --silent --show-error --location --retry 3 --connect-timeout 15 --max-time 180 --proto '=https' --tlsv1.2 \
+    curl --fail --silent --show-error --location \
+       --retry 3 --connect-timeout 15 --max-time 180 --proto '=https' --tlsv1.2 \
         -o /usr/local/bin/devtunnel \
         "https://tunnelsassets${DEVTUNNEL_ENV}.blob.core.windows.net/cli/linux-${devtunnel_arch}-devtunnel"; \
     echo "${DEVTUNNEL_SHA256:-$devtunnel_checksum}  /usr/local/bin/devtunnel" | sha256sum -c -; \
     chmod +x /usr/local/bin/devtunnel; \
     DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp/devtunnel-check devtunnel --version | grep -F "$DEVTUNNEL_VERSION"; \
     mkdir -p /usr/local/share/devtunnel; \
-    find /tmp/devtunnel-check -name devtunnel.deps.json -exec cp '{}' /usr/local/share/devtunnel/devtunnel.deps.json \;; \
+    find /tmp/devtunnel-check -name devtunnel.deps.json \
+       -exec cp '{}' /usr/local/share/devtunnel/devtunnel.deps.json \;; \
     rm -rf /tmp/devtunnel-check; \
     apt-get purge -y --auto-remove curl
 
@@ -80,7 +83,7 @@ RUN --mount=type=bind,from=native,source=/native/debs,target=/native-debs \
     && test -z "$(dpkg --audit)" && rm -rf /var/lib/apt/lists/*
 COPY --from=native /native/evidence/ /usr/local/share/devtunnel/native/evidence/
 COPY --from=native /native/sources/*.tar.xz /native/sources/*.patch /usr/local/share/devtunnel/native/sources/
-COPY images/hub/bin/build-native-libraries images/hub/bin/package-native-libraries.mjs images/hub/bin/build-mime-backport images/hub/bin/native-mime-regression.c /usr/local/share/devtunnel/native/recipe/
+COPY images/hub/bin/build-native-libraries images/hub/bin/package-native-libraries.mjs images/hub/bin/native-metadata.mjs images/hub/bin/build-mime-backport images/hub/bin/native-mime-regression.c /usr/local/share/devtunnel/native/recipe/
 
 RUN test "$(id -u ubuntu)" = 1000 && test "$(id -g ubuntu)" = 1000 \
     && groupmod --new-name devtunnel ubuntu \
@@ -103,4 +106,5 @@ WORKDIR /workspace
 VOLUME ["/home/devtunnel"]
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/devtunnel-entrypoint"]
+HEALTHCHECK --interval=30s --timeout=8s --start-period=15s --retries=3 CMD ["/usr/local/bin/devtunnel-entrypoint", "healthcheck"]
 CMD ["help"]

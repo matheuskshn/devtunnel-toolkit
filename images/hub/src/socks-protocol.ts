@@ -55,9 +55,8 @@ function domainAddress(input: Buffer): Address | undefined {
   }
   const host = bytes.toString("ascii").toLowerCase().replace(/\.$/, "");
   if (
-    !host ||
     !host
-      .split(".")
+      ?.split(".")
       .every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))
   ) {
     throw new SocksProtocolError(8);

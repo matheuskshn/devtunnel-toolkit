@@ -130,11 +130,9 @@ export class SocksProxy {
       if (phase === "closed") {
         return;
       }
-      const frame = method
-        ? Buffer.from([5, 255])
-        : phase === "greeting"
-          ? undefined
-          : reply(code);
+      let frame: Buffer | undefined;
+      if (method) frame = Buffer.from([5, 255]);
+      else if (phase !== "greeting") frame = reply(code);
       const wasStreaming = phase === "stream";
       phase = "closed";
       clearTimers();
@@ -182,7 +180,7 @@ export class SocksProxy {
         return;
       }
       const lines = headers.subarray(0, end).toString("latin1").split("\r\n");
-      const status = /^HTTP\/1\.[01] ([0-9]{3})(?: [\x20-\x7e]*)?$/.exec(
+      const status = /^HTTP\/1\.[01] (\d{3})(?: [\x20-\x7e]*)?$/.exec(
         lines.shift() ?? "",
       );
       if (

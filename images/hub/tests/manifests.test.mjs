@@ -92,7 +92,17 @@ test("Kubernetes example has one non-root replica, persistent data and no ingres
   const spec = values.find((d) => d.kind === "Deployment").spec;
   assert.equal(spec.replicas, 1);
   assert.equal(spec.strategy.type, "Recreate");
-  assert.equal(spec.template.spec.securityContext.runAsUser, 1000);
+  assert.equal(spec.template.spec.securityContext.runAsUser, 10001);
+  assert.equal(spec.template.spec.securityContext.runAsGroup, 10001);
+  assert.equal(spec.template.spec.securityContext.fsGroup, 10001);
+  const namespace = values.find((v) => v.kind === "Namespace");
+  assert.equal(
+    namespace.metadata.labels["pod-security.kubernetes.io/enforce"],
+    "restricted",
+  );
+  for (const resource of values.filter((v) => v.kind !== "Namespace")) {
+    assert.equal(resource.metadata.namespace, namespace.metadata.name);
+  }
   assert.equal(
     spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem,
     true,

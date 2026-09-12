@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${1:-}" == healthcheck ]]; then
+    address="${ROUTE_PROXY_LISTEN_ADDRESS:-127.0.0.1}"
+    port="${ROUTE_PROXY_PORT:-8888}"
+    [[ "$address" == 127.0.0.1 || "$address" == ::1 ]] || exit 1
+    [[ "$port" =~ ^[0-9]{1,5}$ ]] && (( 10#$port >= 1 && 10#$port <= 65535 )) || exit 1
+    # Tinyproxy serves StatHost internally, without DNS or upstream traffic.
+    # Refuse the probe if a custom configuration removed that local endpoint.
+    grep -Fxq 'StatHost "health.toolkit.invalid"' /tmp/tinyproxy.conf || exit 1
+    exec 3<>"/dev/tcp/$address/$port"
+    printf 'GET http://health.toolkit.invalid/ HTTP/1.0\r\nHost: health.toolkit.invalid\r\n\r\n' >&3
+    IFS= read -r -t 3 status <&3
+    [[ "$status" == HTTP/1.[01]' 200 '* ]]
+    exit $?
+fi
+
 if [[ "${1:-}" != "tinyproxy" ]]; then
     exec "$@"
 fi

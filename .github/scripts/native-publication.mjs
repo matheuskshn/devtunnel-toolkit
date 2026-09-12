@@ -192,8 +192,14 @@ async function main() {
     `Verified native AMD64/ARM64 publication: ${plan.image} (${digest})`,
   );
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
-  main().catch((error) => {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
+  try {
+    await main();
+  } catch (error) {
     console.error(error.message);
     process.exitCode = 1;
-  });
+  }
+}

@@ -38,6 +38,20 @@ const result = spawnSync(
     dbus-send --session --print-reply --dest=org.freedesktop.secrets \\
       /org/freedesktop/secrets org.freedesktop.DBus.Introspectable.Introspect
     devtunnel --version
+    /usr/local/bin/devtunnel-entrypoint healthcheck
+    # The probe must fail when its bus is unavailable, without recreating it.
+    mv /tmp/devtunnel-runtime/health-bus /tmp/devtunnel-runtime/health-bus.saved
+    if /usr/local/bin/devtunnel-entrypoint healthcheck; then exit 1; fi
+    mv /tmp/devtunnel-runtime/health-bus.saved /tmp/devtunnel-runtime/health-bus
+    dbus_pid=$(dbus-send --session --print-reply --dest=org.freedesktop.DBus \\
+      /org/freedesktop/DBus org.freedesktop.DBus.GetConnectionUnixProcessID \\
+      string:org.freedesktop.secrets | awk '/uint32/ {print $2}')
+    kill "$dbus_pid"
+    for attempt in {1..30}; do
+      if ! /usr/local/bin/devtunnel-entrypoint healthcheck; then exit 0; fi
+      sleep 0.1
+    done
+    exit 1
   `,
   ],
   { encoding: "utf8", timeout: 120000, maxBuffer: 2 * 1024 * 1024 },

@@ -1,10 +1,16 @@
 {
   "all": true,
-  "src": ["images/hub/dist", "images/hub/web", ".github/scripts"],
+  "src": [
+    "images/hub/dist",
+    "images/hub/web",
+    "images/hub/bin",
+    ".github/scripts"
+  ],
   "include": [
     "images/hub/dist/**/*.js",
     "images/hub/src/**/*.ts",
     "images/hub/web/**/*.js",
+    "images/hub/bin/**/*.mjs",
     ".github/scripts/**/*.mjs"
   ],
   "exclude": ["**/*.test.mjs", "**/tests/**", ".github/scripts/*-smoke.mjs"],

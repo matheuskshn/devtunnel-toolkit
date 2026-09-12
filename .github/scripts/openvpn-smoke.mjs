@@ -368,6 +368,20 @@ for (const [index, protocol] of ["tcp", "udp"].entries()) {
       "1",
     );
     docker(["exec", server, "sh", "-c", health]);
+    assert.notEqual(
+      docker(
+        [
+          "exec",
+          "--env",
+          "OVPN_PORT=53999",
+          server,
+          "/usr/local/bin/openvpn-entrypoint",
+          "healthcheck",
+        ],
+        false,
+      ).status,
+      0,
+    );
     vpnIdentity(server);
     docker([
       "run",

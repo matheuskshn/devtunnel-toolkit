@@ -220,7 +220,7 @@ export function validateProvider(p: AuthProvider): void {
 export class ControlStore {
   data!: ControlData;
   private queue: Promise<unknown> = Promise.resolve();
-  private keys;
+  private readonly keys;
   private failed = false;
   constructor(
     readonly store: StateStore,

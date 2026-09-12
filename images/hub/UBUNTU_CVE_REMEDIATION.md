@@ -1,8 +1,44 @@
 # Remediação das bibliotecas nativas do Hub Ubuntu
 
-Data: 2026-09-11. Candidata local linux/amd64, sem promoção da imagem padrão.
+Atualização: 2026-09-12. A receita Ubuntu tornou-se o Dockerfile padrão e passou
+no CI nativo AMD64/ARM64 em `98edfee`. Não houve publicação de uma nova RC.
+As evidências detalhadas da candidata de 2026-09-11 permanecem abaixo;
+alterações posteriores exigem nova aceitação no commit definitivo.
 
-## Resultado e limites
+## Atualização do scan e da aceitação
+
+O [CI nativo](https://github.com/matheuskshn/devtunnel-toolkit/actions/runs/34632145149)
+do merge de teste `c5f14f2ffbb0794f0ae369a58ea59d1af103e69a` passou nas duas
+arquiteturas, sem QEMU: 196 testes por arquitetura, smokes de container e
+PostgreSQL, cinco pacotes sem erros/avisos Lintian e dez comparações de bibliotecas
+sem incompatibilidade ELF. Isso encerra o bloqueio ARM64 histórico descrito abaixo.
+
+A base Trivy atualizada de 2026-09-12 passou de 46 CVEs / 60 ocorrências para
+**48 CVEs / 63 ocorrências**, sendo 47 MEDIUM e 16 LOW, sem HIGH/CRITICAL pela
+classificação Ubuntu. Nenhum registro possui `FixedVersion` nessa consulta.
+
+| Avaliação atual                | CVEs | Ocorrências brutas |
+| ------------------------------ | ---: | -----------------: |
+| Corrigido por build próprio    |   32 |                 34 |
+| Componente afetado ausente     |    4 |                  8 |
+| Mitigação condicional          |    2 |                  4 |
+| Não reproduzido; não encerrado |    1 |                  1 |
+| Pendente                       |    9 |                 16 |
+
+Foram adicionados [CVE-2026-85091, zlib](https://ubuntu.com/security/CVE-2026-85091)
+(uma ocorrência) e [CVE-2026-85150, GStreamer](https://ubuntu.com/security/CVE-2026-85150)
+(duas). A Canonical registra ambos como correção adiada; para zlib, o patch
+citado não resolveu o reproducer; para GStreamer, o commit exato ainda não está
+público. A biblioteca `libgstrtsp` está instalada. A simulação de remoção dos
+pacotes GStreamer também remove gnome-keyring, então não foi executada.
+Os dois possuem CVSS HIGH, apesar da prioridade Ubuntu MEDIUM.
+
+Não foi demonstrado um caminho explorável no Hub, mas isso não encerra os CVEs.
+Não houve remoção forçada, patch especulativo, VEX ou alteração de severidade.
+Os grupos da avaliação anterior abaixo continuam válidos para os 46 CVEs
+originais; os dois novos pertencem ao grupo pendente.
+
+## Resultado e limites da candidata de 2026-09-11
 
 As quatro frentes foram executadas: avaliação de remoções, aplicação de correções
 disponíveis, verificação de aplicabilidade e registro individual das pendências.
@@ -19,13 +55,13 @@ registros Ubuntu consultados continuam sem um limite de versão corrigida para
 esses pacotes. O scanner não verifica o conteúdo dos patches aplicados por nós.
 Não foram usados ignorefile, ignore-unfixed, VEX ou alteração de severidade.
 
-| Avaliação da candidata | CVEs | Ocorrências brutas |
-| --- | ---: | ---: |
-| Corrigido por build próprio | 32 | 34 |
-| Componente afetado ausente | 4 | 8 |
-| Mitigação condicional | 2 | 4 |
-| Não reproduzido; não encerrado | 1 | 1 |
-| Pendente | 7 | 13 |
+| Avaliação da candidata         | CVEs | Ocorrências brutas |
+| ------------------------------ | ---: | -----------------: |
+| Corrigido por build próprio    |   32 |                 34 |
+| Componente afetado ausente     |    4 |                  8 |
+| Mitigação condicional          |    2 |                  4 |
+| Não reproduzido; não encerrado |    1 |                  1 |
+| Pendente                       |    7 |                 13 |
 
 Os grupos são mutuamente exclusivos e somam 46 / 60. Apenas o primeiro significa
 correção de código. Os outros grupos não são somados como CVEs corrigidos.
@@ -53,11 +89,11 @@ headless do keyring, com nova validação de compatibilidade e persistência.
 
 ## 2. Correções incorporadas
 
-| Componente | Pacote anterior | Pacote próprio | Cobertura entre os 46 CVEs |
-| --- | --- | --- | ---: |
-| Expat | 2.7.4-1 | 2.8.4-0devtunnel1 | 22 |
-| GLib | 2.88.0-1 | 2.88.3-0devtunnel1 + dois patches | 9 |
-| p11-kit | 0.26.2-2 | 0.26.5-0devtunnel1 | 1 |
+| Componente | Pacote anterior | Pacote próprio                    | Cobertura entre os 46 CVEs |
+| ---------- | --------------- | --------------------------------- | -------------------------: |
+| Expat      | 2.7.4-1         | 2.8.4-0devtunnel1                 |                         22 |
+| GLib       | 2.88.0-1        | 2.88.3-0devtunnel1 + dois patches |                          9 |
+| p11-kit    | 0.26.2-2        | 0.26.5-0devtunnel1                |                          1 |
 
 Fontes primárias:
 
@@ -118,7 +154,7 @@ contra as bibliotecas da imagem final; o helper de fases rejeita chamadas sem
 fase ou com `all`, que omitiam patches obrigatórios. O Dockerfile permanece como
 orquestrador da sequência completa. O revisor conferiu as correções e não
 reportou novos achados no delta. Essa revisão de código não é uma certificação
-externa nem substitui a execução ARM64 pendente.
+externa. A execução ARM64 foi concluída posteriormente no CI nativo citado acima.
 
 São cinco pacotes e 17 ELFs substituídos. Permanecem as duas ABIs do Expat,
 os helpers do GLib e os módulos cliente/trust do p11-kit. O trust store continua
@@ -176,7 +212,7 @@ continua sendo a dos testes sintéticos de criptografia, isolamento e recuperaç
 não uma nova autenticação externa persistida em PostgreSQL. Reinício imediato
 também não comprova renovação após expiração em 24 horas ou 30 dias.
 
-### Tentativa ARM64
+### Histórico da tentativa ARM64 sob emulação
 
 O build ARM64 foi iniciado com QEMU/binfmt temporário e chegou à compilação do
 Expat. Uma sonda ARM64 isolada do parser MIME corrigido revelou que o
@@ -187,8 +223,8 @@ de `LeakSanitizer does not work under ptrace`. O controle AMD64 passou com
 Esse diagnóstico reduzido não é aceitação. A receita mantém `detect_leaks=1`,
 sem exceção por arquitetura. O build completo foi interrompido depois de
 comprovar o bloqueio do teste obrigatório; não foi gerada nem aprovada uma imagem
-ARM64 final. O próximo executor deve ser ARM64 nativo para concluir o build e
-repetir os testes de runtime. O registro temporário `qemu-aarch64` foi removido,
+ARM64 final naquela tentativa. O executor nativo citado acima concluiu
+posteriormente o build e os testes. O registro temporário `qemu-aarch64` foi removido,
 preservando os registros que já existiam no host.
 
 O workflow [Hub Ubuntu native acceptance](../../.github/workflows/hub-ubuntu-acceptance.yml)
@@ -198,8 +234,8 @@ audita os pacotes em ambiente separado e gera scan/SBOM da imagem exata.
 Não usa QEMU, credenciais de registro, publicação ou acesso ao ACA. As evidências
 são retidas por sete dias. Pode ser iniciado manualmente ou por PRs com mudanças
 no código/testes da candidata; documentação isolada não dispara o build.
-O arquivo foi validado localmente, inclusive com Actionlint, mas ainda não foi
-enviado nem executado no GitHub; sua existência não encerra a aceitação ARM64.
+O arquivo foi validado localmente com Actionlint e depois executado no GitHub,
+com sucesso em AMD64 e ARM64 nativos. Não houve bypass do LeakSanitizer.
 
 A [sonda de segurança](tests/ubuntu-security-probe.mjs) confirma a ausência de
 avahi-daemon, systemd-journald, genrb, eu-readelf, eu-strip, libdw e helpers de
@@ -217,9 +253,9 @@ não impede um operador de sobrescrevê-lo.
 
 ## 4. Pendências e manutenção
 
-Continuam sem correção incorporada sete CVEs em Expat, glibc, Cairo, Pixman e tar,
-mais o caso libelf que requer confirmação adicional. Os casos condicionais e
-componentes ausentes também continuam no inventário bruto.
+Continuam sem correção incorporada nove CVEs em Expat, glibc, Cairo, Pixman,
+tar, zlib e GStreamer, mais o caso libelf que requer confirmação adicional.
+Os casos condicionais e componentes ausentes também continuam no inventário bruto.
 
 - Expat CVE-2025-66382: acompanhar a correção de complexidade algorítmica.
 - glibc CVE-2026-18374: a nota consultada do fornecedor registra ausência de patch.
@@ -234,8 +270,8 @@ componentes ausentes também continuam no inventário bruto.
   O Hub empacota credenciais em JSON criptografado, não em arquivos tar.
 - libelf CVE-2025-1376: ampliar regressões e conferir a correspondência com o
   pacote-fonte antes de encerrar.
-- ARM64: a emulação foi testada, mas o LeakSanitizer impede concluir a aceitação
-  neste executor. É necessário repetir em ARM64 nativo.
+- ARM64: aceitação concluída no CI nativo, sem desabilitar o LeakSanitizer.
+  Mudanças posteriores de código/empacotamento exigem repetir esse gate.
 - Logins externos reais com persistência em arquivos e revisão adicional por
   outro agente foram concluídos. Permanecem os limites de duração e backend
   descritos acima. Esta candidata não está aprovada para publicação.
@@ -247,8 +283,9 @@ Uma atualização Ubuntu com versão numericamente menor que a versão própria
 não será instalada automaticamente sobre ela. Quando houver pacote oficial
 equivalente, planejar e validar a retirada do override local.
 
-Não houve commit, push, publicação, alteração de ACA ou substituição do container
-local em execução. As limitações das outras imagens e do Sonar continuam no
+O commit/push e o CI do conjunto Ubuntu foram concluídos em `98edfee`; não houve
+publicação, alteração de ACA ou substituição do container local em execução.
+As limitações das outras imagens e do Sonar continuam no
 [relatório geral](../../SECURITY_REVIEW.md).
 
 ## Reprodução
@@ -272,51 +309,51 @@ Asterisco indica os oito prioritários desta etapa. Esta matriz e o
 [registro estruturado](native-cve-assessment.json) são evidências de avaliação,
 não arquivos de supressão ou aprovação automática do scanner.
 
-| CVE | Pacote-fonte | Ocorrências brutas | Avaliação |
-| --- | --- | ---: | --- |
-| [CVE-2017-7475](https://ubuntu.com/security/CVE-2017-7475) | cairo | 3 | Pendente |
-| [CVE-2018-18064](https://ubuntu.com/security/CVE-2018-18064) | cairo | 3 | Pendente |
-| [CVE-2019-12522](https://ubuntu.com/security/CVE-2019-12522) | squid | 2 | Mitigação condicional |
-| [CVE-2023-37769](https://ubuntu.com/security/CVE-2023-37769) | pixman | 1 | Pendente |
-| [CVE-2024-56433](https://ubuntu.com/security/CVE-2024-56433) | shadow | 2 | Mitigação condicional |
-| [CVE-2025-1352](https://ubuntu.com/security/CVE-2025-1352) | elfutils | 1 | Componente afetado ausente |
-| [CVE-2025-1376](https://ubuntu.com/security/CVE-2025-1376) | elfutils | 1 | Não reproduzido; não encerrado |
-| [CVE-2025-5222](https://ubuntu.com/security/CVE-2025-5222) | icu | 1 | Componente afetado ausente |
-| [CVE-2025-59529](https://ubuntu.com/security/CVE-2025-59529) | avahi | 3 | Componente afetado ausente |
-| [CVE-2025-66382](https://ubuntu.com/security/CVE-2025-66382) | expat | 1 | Pendente |
-| [CVE-2026-13757](https://ubuntu.com/security/CVE-2026-13757) | p11-kit | 3 | Corrigido por build próprio |
-| [CVE-2026-15588](https://ubuntu.com/security/CVE-2026-15588) | glib2.0 | 1 | Corrigido por build próprio |
-| [CVE-2026-16118](https://ubuntu.com/security/CVE-2026-16118) | glib2.0 | 1 | Corrigido por build próprio |
-| [CVE-2026-18374](https://ubuntu.com/security/CVE-2026-18374) | glibc | 3 | Pendente |
-| [CVE-2026-18477](https://ubuntu.com/security/CVE-2026-18477) | tar | 1 | Pendente |
-| [CVE-2026-18508](https://ubuntu.com/security/CVE-2026-18508) | tar | 1 | Pendente |
-| [CVE-2026-32776](https://ubuntu.com/security/CVE-2026-32776) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-32777](https://ubuntu.com/security/CVE-2026-32777) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-32778](https://ubuntu.com/security/CVE-2026-32778) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-40228](https://ubuntu.com/security/CVE-2026-40228) | systemd | 3 | Componente afetado ausente |
-| [CVE-2026-41080](https://ubuntu.com/security/CVE-2026-41080) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-45186](https://ubuntu.com/security/CVE-2026-45186) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-50219](https://ubuntu.com/security/CVE-2026-50219) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-56131](https://ubuntu.com/security/CVE-2026-56131) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-56132](https://ubuntu.com/security/CVE-2026-56132) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-56403](https://ubuntu.com/security/CVE-2026-56403) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-56404](https://ubuntu.com/security/CVE-2026-56404) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-56405](https://ubuntu.com/security/CVE-2026-56405) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-56406](https://ubuntu.com/security/CVE-2026-56406) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-56407](https://ubuntu.com/security/CVE-2026-56407) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-56408](https://ubuntu.com/security/CVE-2026-56408) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-56409](https://ubuntu.com/security/CVE-2026-56409) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-56410](https://ubuntu.com/security/CVE-2026-56410) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-56411](https://ubuntu.com/security/CVE-2026-56411) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-56412](https://ubuntu.com/security/CVE-2026-56412) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-58010](https://ubuntu.com/security/CVE-2026-58010) * | glib2.0 | 1 | Corrigido por build próprio |
-| [CVE-2026-58011](https://ubuntu.com/security/CVE-2026-58011) * | glib2.0 | 1 | Corrigido por build próprio |
-| [CVE-2026-58012](https://ubuntu.com/security/CVE-2026-58012) * | glib2.0 | 1 | Corrigido por build próprio |
-| [CVE-2026-58013](https://ubuntu.com/security/CVE-2026-58013) * | glib2.0 | 1 | Corrigido por build próprio |
-| [CVE-2026-58014](https://ubuntu.com/security/CVE-2026-58014) * | glib2.0 | 1 | Corrigido por build próprio |
-| [CVE-2026-58015](https://ubuntu.com/security/CVE-2026-58015) * | glib2.0 | 1 | Corrigido por build próprio |
-| [CVE-2026-58016](https://ubuntu.com/security/CVE-2026-58016) * | glib2.0 | 1 | Corrigido por build próprio |
-| [CVE-2026-66046](https://ubuntu.com/security/CVE-2026-66046) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-72522](https://ubuntu.com/security/CVE-2026-72522) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-76641](https://ubuntu.com/security/CVE-2026-76641) | expat | 1 | Corrigido por build próprio |
-| [CVE-2026-76957](https://ubuntu.com/security/CVE-2026-76957) * | expat | 1 | Corrigido por build próprio |
+| CVE                                                             | Pacote-fonte | Ocorrências brutas | Avaliação                      |
+| --------------------------------------------------------------- | ------------ | -----------------: | ------------------------------ |
+| [CVE-2017-7475](https://ubuntu.com/security/CVE-2017-7475)      | cairo        |                  3 | Pendente                       |
+| [CVE-2018-18064](https://ubuntu.com/security/CVE-2018-18064)    | cairo        |                  3 | Pendente                       |
+| [CVE-2019-12522](https://ubuntu.com/security/CVE-2019-12522)    | squid        |                  2 | Mitigação condicional          |
+| [CVE-2023-37769](https://ubuntu.com/security/CVE-2023-37769)    | pixman       |                  1 | Pendente                       |
+| [CVE-2024-56433](https://ubuntu.com/security/CVE-2024-56433)    | shadow       |                  2 | Mitigação condicional          |
+| [CVE-2025-1352](https://ubuntu.com/security/CVE-2025-1352)      | elfutils     |                  1 | Componente afetado ausente     |
+| [CVE-2025-1376](https://ubuntu.com/security/CVE-2025-1376)      | elfutils     |                  1 | Não reproduzido; não encerrado |
+| [CVE-2025-5222](https://ubuntu.com/security/CVE-2025-5222)      | icu          |                  1 | Componente afetado ausente     |
+| [CVE-2025-59529](https://ubuntu.com/security/CVE-2025-59529)    | avahi        |                  3 | Componente afetado ausente     |
+| [CVE-2025-66382](https://ubuntu.com/security/CVE-2025-66382)    | expat        |                  1 | Pendente                       |
+| [CVE-2026-13757](https://ubuntu.com/security/CVE-2026-13757)    | p11-kit      |                  3 | Corrigido por build próprio    |
+| [CVE-2026-15588](https://ubuntu.com/security/CVE-2026-15588)    | glib2.0      |                  1 | Corrigido por build próprio    |
+| [CVE-2026-16118](https://ubuntu.com/security/CVE-2026-16118)    | glib2.0      |                  1 | Corrigido por build próprio    |
+| [CVE-2026-18374](https://ubuntu.com/security/CVE-2026-18374)    | glibc        |                  3 | Pendente                       |
+| [CVE-2026-18477](https://ubuntu.com/security/CVE-2026-18477)    | tar          |                  1 | Pendente                       |
+| [CVE-2026-18508](https://ubuntu.com/security/CVE-2026-18508)    | tar          |                  1 | Pendente                       |
+| [CVE-2026-32776](https://ubuntu.com/security/CVE-2026-32776)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-32777](https://ubuntu.com/security/CVE-2026-32777)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-32778](https://ubuntu.com/security/CVE-2026-32778)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-40228](https://ubuntu.com/security/CVE-2026-40228)    | systemd      |                  3 | Componente afetado ausente     |
+| [CVE-2026-41080](https://ubuntu.com/security/CVE-2026-41080)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-45186](https://ubuntu.com/security/CVE-2026-45186)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-50219](https://ubuntu.com/security/CVE-2026-50219)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-56131](https://ubuntu.com/security/CVE-2026-56131)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-56132](https://ubuntu.com/security/CVE-2026-56132)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-56403](https://ubuntu.com/security/CVE-2026-56403)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-56404](https://ubuntu.com/security/CVE-2026-56404)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-56405](https://ubuntu.com/security/CVE-2026-56405)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-56406](https://ubuntu.com/security/CVE-2026-56406)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-56407](https://ubuntu.com/security/CVE-2026-56407)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-56408](https://ubuntu.com/security/CVE-2026-56408)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-56409](https://ubuntu.com/security/CVE-2026-56409)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-56410](https://ubuntu.com/security/CVE-2026-56410)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-56411](https://ubuntu.com/security/CVE-2026-56411)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-56412](https://ubuntu.com/security/CVE-2026-56412)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-58010](https://ubuntu.com/security/CVE-2026-58010) \* | glib2.0      |                  1 | Corrigido por build próprio    |
+| [CVE-2026-58011](https://ubuntu.com/security/CVE-2026-58011) \* | glib2.0      |                  1 | Corrigido por build próprio    |
+| [CVE-2026-58012](https://ubuntu.com/security/CVE-2026-58012) \* | glib2.0      |                  1 | Corrigido por build próprio    |
+| [CVE-2026-58013](https://ubuntu.com/security/CVE-2026-58013) \* | glib2.0      |                  1 | Corrigido por build próprio    |
+| [CVE-2026-58014](https://ubuntu.com/security/CVE-2026-58014) \* | glib2.0      |                  1 | Corrigido por build próprio    |
+| [CVE-2026-58015](https://ubuntu.com/security/CVE-2026-58015) \* | glib2.0      |                  1 | Corrigido por build próprio    |
+| [CVE-2026-58016](https://ubuntu.com/security/CVE-2026-58016) \* | glib2.0      |                  1 | Corrigido por build próprio    |
+| [CVE-2026-66046](https://ubuntu.com/security/CVE-2026-66046)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-72522](https://ubuntu.com/security/CVE-2026-72522)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-76641](https://ubuntu.com/security/CVE-2026-76641)    | expat        |                  1 | Corrigido por build próprio    |
+| [CVE-2026-76957](https://ubuntu.com/security/CVE-2026-76957) \* | expat        |                  1 | Corrigido por build próprio    |

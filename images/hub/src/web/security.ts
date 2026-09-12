@@ -75,11 +75,9 @@ export function setCookie(
   maxAge = 28800,
 ): void {
   const current = res.getHeader("Set-Cookie");
-  const previous = Array.isArray(current)
-    ? current
-    : current
-      ? [String(current)]
-      : [];
+  let previous: string[] = [];
+  if (Array.isArray(current)) previous = current;
+  else if (current) previous = [String(current)];
   res.setHeader("Set-Cookie", [
     ...previous,
     `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? "; Secure" : ""}`,
@@ -95,7 +93,7 @@ export interface BrowserSession {
   providerEpoch?: number;
 }
 export class Sessions {
-  private sessions = new Map<string, BrowserSession>();
+  private readonly sessions = new Map<string, BrowserSession>();
   constructor(
     readonly control: ControlStore,
     readonly secure: boolean,
@@ -155,7 +153,10 @@ export class Sessions {
   }
 }
 export class RateLimit {
-  private buckets = new Map<string, { count: number; until: number }>();
+  private readonly buckets = new Map<
+    string,
+    { count: number; until: number }
+  >();
   take(key: string, limit = 8, window = 60000): void {
     for (const [k, v] of this.buckets)
       if (v.until < Date.now()) this.buckets.delete(k);

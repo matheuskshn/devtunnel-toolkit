@@ -43,4 +43,5 @@ VOLUME ["/etc/openvpn"]
 USER 10001:10001
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/openvpn-entrypoint"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD ["/usr/local/bin/openvpn-entrypoint", "healthcheck"]
 CMD ["server"]

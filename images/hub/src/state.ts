@@ -315,10 +315,7 @@ export class StateStore {
     if (session.tunnel_name !== undefined) {
       return;
     }
-    check(
-      session.identity && session.identity.provider === session.provider,
-      "AUTH_REQUIRED",
-    );
+    check(session.identity?.provider === session.provider, "AUTH_REQUIRED");
     check(session.tunnel_name_template, "INVALID_TUNNEL_NAME_TEMPLATE");
     const name = resolveTunnelName(
       session.tunnel_name_template,

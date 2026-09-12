@@ -39,4 +39,5 @@ EXPOSE 8888
 USER tinyproxy
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/tinyproxy-entrypoint"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/usr/local/bin/tinyproxy-entrypoint", "healthcheck"]
 CMD ["tinyproxy"]

@@ -214,39 +214,39 @@ stop startup. File validation is not bypassed by environment overrides.
 Without an allowed domain list, every proxy destination is denied, unless the
 administrator explicitly enables `HUB_ALLOW_ALL_DOMAINS=true`.
 
-| Key                                 | Default                    | Purpose                                                             |
-| ----------------------------------- | -------------------------- | ------------------------------------------------------------------- |
-| `hubId`                           | `devhub`                 | Prefix for default fixed names; immutable for existing state        |
-| `tunnelNameTemplate` | `{hub_id}-{username}` | Captured for new sessions; resolved once after verified login |
-| `proxyPort` | `3140` | Published tunnel/client port; global, distinct from internal listeners |
-| `socksEnabled` | `false` | Enable SOCKS5 TCP CONNECT through the same Squid policy |
-| `socksPort` | `3180` | Published SOCKS tunnel/client port |
-| `listenerStart` / `listenerEnd` | `18001` / `18999`      | Reserved internal listener pool                                     |
-| `maxSessions`                     | `50`                     | Maximum non-removed sessions                                        |
-| `allowedDomains`                  | `[]`                     | Exact DNS names, or`.example.com` for a domain and its subdomains |
-| `allowedPorts`                    | `[80,443]`               | Destination ports                                                   |
-| `connectPorts`                    | `[443]`                  | Allowed CONNECT destinations; subset of allowed ports               |
-| `allowedProviders`                | `["microsoft","github"]` | Permitted session providers                                         |
-| `allowedMicrosoftTenants`         | `[]`                     | Optional tenant-ID allowlist; empty permits any Microsoft tenant    |
-| `healthPort`                      | `8080`                   | Liveness/readiness only; no identity or admin information           |
-| `maintenanceSeconds`              | `300`                    | Remote policy/credential recheck interval                           |
+| Key                             | Default                  | Purpose                                                                |
+| ------------------------------- | ------------------------ | ---------------------------------------------------------------------- |
+| `hubId`                         | `devhub`                 | Prefix for default fixed names; immutable for existing state           |
+| `tunnelNameTemplate`            | `{hub_id}-{username}`    | Captured for new sessions; resolved once after verified login          |
+| `proxyPort`                     | `3140`                   | Published tunnel/client port; global, distinct from internal listeners |
+| `socksEnabled`                  | `false`                  | Enable SOCKS5 TCP CONNECT through the same Squid policy                |
+| `socksPort`                     | `3180`                   | Published SOCKS tunnel/client port                                     |
+| `listenerStart` / `listenerEnd` | `18001` / `18999`        | Reserved internal listener pool                                        |
+| `maxSessions`                   | `50`                     | Maximum non-removed sessions                                           |
+| `allowedDomains`                | `[]`                     | Exact DNS names, or`.example.com` for a domain and its subdomains      |
+| `allowedPorts`                  | `[80,443]`               | Destination ports                                                      |
+| `connectPorts`                  | `[443]`                  | Allowed CONNECT destinations; subset of allowed ports                  |
+| `allowedProviders`              | `["microsoft","github"]` | Permitted session providers                                            |
+| `allowedMicrosoftTenants`       | `[]`                     | Optional tenant-ID allowlist; empty permits any Microsoft tenant       |
+| `healthPort`                    | `8080`                   | Liveness/readiness only; no identity or admin information              |
+| `maintenanceSeconds`            | `300`                    | Remote policy/credential recheck interval                              |
 
-| Environment variable | JSON key |
-| --- | --- |
-| `HUB_ID` | `hubId` |
-| `HUB_TUNNEL_NAME_TEMPLATE` | `tunnelNameTemplate` |
-| `HUB_PROXY_PORT` | `proxyPort` |
-| `HUB_SOCKS_ENABLED` | `socksEnabled` |
-| `HUB_SOCKS_PORT` | `socksPort` |
-| `HUB_LISTENER_START` / `HUB_LISTENER_END` | `listenerStart` / `listenerEnd` |
-| `HUB_MAX_SESSIONS` | `maxSessions` |
-| `HUB_ALLOWED_DOMAINS` | `allowedDomains` |
-| `HUB_ALLOW_ALL_DOMAINS` | `allowAllDomains` (boolean, default `false`) |
-| `HUB_ALLOWED_PORTS` / `HUB_CONNECT_PORTS` | `allowedPorts` / `connectPorts` |
-| `HUB_ALLOWED_PROVIDERS` | `allowedProviders` |
-| `HUB_ALLOWED_MICROSOFT_TENANTS` | `allowedMicrosoftTenants` |
-| `HUB_HEALTH_PORT` | `healthPort` |
-| `HUB_MAINTENANCE_SECONDS` | `maintenanceSeconds` |
+| Environment variable                      | JSON key                                     |
+| ----------------------------------------- | -------------------------------------------- |
+| `HUB_ID`                                  | `hubId`                                      |
+| `HUB_TUNNEL_NAME_TEMPLATE`                | `tunnelNameTemplate`                         |
+| `HUB_PROXY_PORT`                          | `proxyPort`                                  |
+| `HUB_SOCKS_ENABLED`                       | `socksEnabled`                               |
+| `HUB_SOCKS_PORT`                          | `socksPort`                                  |
+| `HUB_LISTENER_START` / `HUB_LISTENER_END` | `listenerStart` / `listenerEnd`              |
+| `HUB_MAX_SESSIONS`                        | `maxSessions`                                |
+| `HUB_ALLOWED_DOMAINS`                     | `allowedDomains`                             |
+| `HUB_ALLOW_ALL_DOMAINS`                   | `allowAllDomains` (boolean, default `false`) |
+| `HUB_ALLOWED_PORTS` / `HUB_CONNECT_PORTS` | `allowedPorts` / `connectPorts`              |
+| `HUB_ALLOWED_PROVIDERS`                   | `allowedProviders`                           |
+| `HUB_ALLOWED_MICROSOFT_TENANTS`           | `allowedMicrosoftTenants`                    |
+| `HUB_HEALTH_PORT`                         | `healthPort`                                 |
+| `HUB_MAINTENANCE_SECONDS`                 | `maintenanceSeconds`                         |
 
 Lists use comma-separated values, with whitespace around items ignored, not JSON
 arrays. An unset variable preserves the file value or default; an empty variable
@@ -317,7 +317,23 @@ Squid sends a minimal record through a private FIFO. The manager enriches it
 using the immutable listener-to-session mapping and emits JSON on stdout:
 
 ```json
-{"event":"proxy_access","session_id":"user-a","provider":"microsoft","user_id":"microsoft:tenant-example:subject-example","user_login":"user-a@example.com","tunnel_id":"devhub-user-a.use1","attribution":"session_listener","listener":18001,"destination":"service.example.com","destination_port":443,"method":"CONNECT","status":200,"bytes":1024,"duration_ms":42,"time":"2026-01-01T00:00:00.000Z"}
+{
+  "event": "proxy_access",
+  "session_id": "user-a",
+  "provider": "microsoft",
+  "user_id": "microsoft:tenant-example:subject-example",
+  "user_login": "user-a@example.com",
+  "tunnel_id": "devhub-user-a.use1",
+  "attribution": "session_listener",
+  "listener": 18001,
+  "destination": "service.example.com",
+  "destination_port": 443,
+  "method": "CONNECT",
+  "status": 200,
+  "bytes": 1024,
+  "duration_ms": 42,
+  "time": "2026-01-01T00:00:00.000Z"
+}
 ```
 
 The login comes from the authenticated session, not the session alias or a
@@ -341,8 +357,8 @@ or new user authentication. Keep `HUB_ID` stable across replacements.
 
 ### Filesystem / Azure Files
 
-| Path         | Contents                                                               | Persistence                  |
-| ------------ | ---------------------------------------------------------------------- | ---------------------------- |
+| Path       | Contents                                                               | Persistence                  |
+| ---------- | ---------------------------------------------------------------------- | ---------------------------- |
 | `/config`  | Deployment configuration, mounted read-only                            | Administrator managed        |
 | `/data`    | State, immutable mappings, complete per-session homes/keyrings         | Persistent volume            |
 | `/run/hub` | Private socket, D-Bus sockets, keyring control, FIFO, Squid config/PID | Ephemeral writable directory |
@@ -371,16 +387,16 @@ database or container administration to tunnel users. PostgreSQL 16 is covered
 by integration tests. Use a direct connection or session pooling, never transaction
 pooling: the manager holds a session-level advisory lock for its lifetime.
 
-| Variable | Purpose |
-| --- | --- |
-| `HUB_STORAGE_BACKEND=postgres` | Select the database backend; `/data` is unused |
-| `HUB_PG_HOST`, `HUB_PG_DATABASE`, `HUB_PG_USER`, `HUB_PG_PASSWORD` | Required database connection settings |
-| `HUB_PG_PORT` | Port, default `5432` |
-| `HUB_PG_SSLMODE` | Default `verify-full`; `disable` is only for isolated local tests |
-| `HUB_PG_CA_FILE` | Optional mounted PEM trust bundle; otherwise use system trust |
-| `HUB_CREDENTIAL_KEY` | Required random 32-byte key, base64 encoded |
-| `HUB_CREDENTIAL_KEY_ID` | Active key label, default `primary` |
-| `HUB_CREDENTIAL_PREVIOUS_KEYS` | Optional JSON map of previous key labels to base64 keys |
+| Variable                                                           | Purpose                                                           |
+| ------------------------------------------------------------------ | ----------------------------------------------------------------- |
+| `HUB_STORAGE_BACKEND=postgres`                                     | Select the database backend; `/data` is unused                    |
+| `HUB_PG_HOST`, `HUB_PG_DATABASE`, `HUB_PG_USER`, `HUB_PG_PASSWORD` | Required database connection settings                             |
+| `HUB_PG_PORT`                                                      | Port, default `5432`                                              |
+| `HUB_PG_SSLMODE`                                                   | Default `verify-full`; `disable` is only for isolated local tests |
+| `HUB_PG_CA_FILE`                                                   | Optional mounted PEM trust bundle; otherwise use system trust     |
+| `HUB_CREDENTIAL_KEY`                                               | Required random 32-byte key, base64 encoded                       |
+| `HUB_CREDENTIAL_KEY_ID`                                            | Active key label, default `primary`                               |
+| `HUB_CREDENTIAL_PREVIOUS_KEYS`                                     | Optional JSON map of previous key labels to base64 keys           |
 
 TLS checks the server certificate and hostname. Inject the password and encryption
 key using platform secrets, not image layers, source files or command arguments.
@@ -470,7 +486,60 @@ must honor permissions and locking. Network/DNS reachability to destinations and
 outbound access to authentication, management and relay services are deployment
 responsibilities. Resource values are starting points, not validated capacity.
 
+The template creates the `devtunnel-toolkit` namespace with the restricted Pod
+Security policy and runs as UID/GID/fsGroup 10001. The image's default remains
+1000 for existing Docker/ACA installations. The alternative `hub-restricted`
+account must exist in the selected image because D-Bus requires a passwd entry;
+replace the example image tag with a validated release containing that account.
+The older `0.1.0-rc.4` release does not contain this change. For existing PVCs,
+back up the data and plan an offline ownership migration before changing UID.
+Do not add a root startup script that silently changes ownership of user data.
+The local UID 10001 smoke simulates fsGroup on a new volume; real CSI permission,
+locking and rollout behavior still require environment-specific acceptance.
+
+GHCR is not in Trivy's default trusted-registry list (KSV-0125). Define and enforce
+the deployment's registry/repository admission policy; an image URL alone does
+not implement that restriction. The repository does not suppress this warning.
+
 ## Local verification and release gates
+
+### Native packager coverage
+
+`npm run test:coverage` includes unexecuted native JavaScript in its inventory.
+To measure the real packager as well, first run that command, then use a
+**disposable native build stage**, not the Hub runtime or an existing data volume.
+The helper regenerates only the stage's five extracted package/download trees,
+reruns packaging and checks the new packages with Lintian/abidiff. Sources remain
+read-only. Keep the same absolute source paths so c8 can merge V8 data without
+rewriting coverage positions or counting a different file as tested.
+
+From the repository root, with Docker and public APT access:
+
+```sh
+docker build --target native -f images/hub/Dockerfile -t hub-native-coverage:local images/hub
+native_coverage_container="$(docker create \
+  --security-opt no-new-privileges \
+  --mount "type=bind,src=$PWD/images/hub/bin,dst=$PWD/images/hub/bin,readonly" \
+  --mount "type=bind,src=$PWD/images/hub/tests,dst=$PWD/images/hub/tests,readonly" \
+  --workdir "$PWD" \
+  --env HUB_NATIVE_COVERAGE_DISPOSABLE=1 \
+  --env HUB_NATIVE_COVERAGE_OUTPUT=/tmp/native-coverage \
+  hub-native-coverage:local sh -ec \
+  'apt-get update && apt-get install -y --no-install-recommends lintian abigail-tools && node images/hub/tests/native-package-coverage.mjs')"
+docker start --attach "$native_coverage_container"
+test "$(docker inspect --format '{{.State.ExitCode}}' "$native_coverage_container")" = 0
+docker cp "$native_coverage_container:/tmp/native-coverage/tmp/." images/hub/coverage/tmp/
+docker cp "$native_coverage_container:/tmp/native-coverage/native-audit" images/hub/coverage/
+docker rm "$native_coverage_container"
+node images/hub/node_modules/c8/bin/c8.js report --config images/hub/.c8rc.json
+```
+
+Stop if any command fails; preserve that test container for diagnosis instead
+of importing incomplete coverage. `docker cp` without `-a` exports the files
+with the invoking user's ownership. Reports remain ignored by Git. No production
+account, host home, Docker socket or runtime data is mounted into the build stage.
+
+### Application checks
 
 ```sh
 cd images/hub
@@ -522,13 +591,13 @@ audit at the high-severity threshold, local container smoke and both architectur
 builds. Only the publishing job receives registry credentials and package-write
 permissions. Images include build provenance and an SBOM.
 
-| Event | Result |
-| --- | --- |
-| Pull request changing Hub files | Tests and builds only; no registry login or publication |
-| Push to `main` changing Hub build inputs | Publish `edge`, `main` and a unique commit/run snapshot |
-| Stable tag such as `v1.2.3` | Suite coordinator publishes all five images and completes a GitHub Release |
-| Prerelease tag such as `v1.2.3-rc.1` | Suite coordinator publishes exact RC versions, not stable aliases |
-| Manual Hub run | Rebuild and publish a unique snapshot; only `main` runs update `edge`/`main` |
+| Event                                    | Result                                                                       |
+| ---------------------------------------- | ---------------------------------------------------------------------------- |
+| Pull request changing Hub files          | Tests and builds only; no registry login or publication                      |
+| Push to `main` changing Hub build inputs | Publish `edge`, `main` and a unique commit/run snapshot                      |
+| Stable tag such as `v1.2.3`              | Suite coordinator publishes all five images and completes a GitHub Release   |
+| Prerelease tag such as `v1.2.3-rc.1`     | Suite coordinator publishes exact RC versions, not stable aliases            |
+| Manual Hub run                           | Rebuild and publish a unique snapshot; only `main` runs update `edge`/`main` |
 
 On ordinary pushes and PRs, only changes to `src/`, `bin/`, the Dockerfile, `.dockerignore`, package manifests
 or TypeScript configuration select a Hub image build. Documentation, examples,

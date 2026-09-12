@@ -126,13 +126,13 @@ export async function finishLogin(
   });
   const claims = tokens.claims();
   check(claims?.sub, "LOGIN_FAILED");
+  const displayName = [claims.name, claims.preferred_username, claims.sub].find(
+    (value): value is string => typeof value === "string" && value.length > 0,
+  )!;
   // No linking by email/login: the verified subject under this immutable issuer owns the binding.
   return {
     subject: claims.sub,
-    name: String(claims.name ?? claims.preferred_username ?? claims.sub).slice(
-      0,
-      120,
-    ),
+    name: displayName.slice(0, 120),
   };
 }
 export async function ldapLogin(

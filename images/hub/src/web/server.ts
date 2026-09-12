@@ -135,16 +135,16 @@ const errorStatuses = new Map<string, number>([
 export class WebConsole {
   private server?: Server;
   readonly browsers: Sessions;
-  private limits = new RateLimit();
+  private readonly limits = new RateLimit();
   private authenticating = 0;
-  private flows = new Map<string, LoginFlow>();
-  private jobs = new Map<string, Job>();
-  private records: Record<string, unknown>[] = [];
+  private readonly flows = new Map<string, LoginFlow>();
+  private readonly jobs = new Map<string, Job>();
+  private readonly records: Record<string, unknown>[] = [];
   private sequence = 0;
   private closed = false;
-  private streams = new Set<EventClient>();
+  private readonly streams = new Set<EventClient>();
   private streamTimer?: NodeJS.Timeout;
-  private streamEpoch = randomUUID();
+  private readonly streamEpoch = randomUUID();
   constructor(
     readonly host: ConsoleHost,
     readonly control: ControlStore,
@@ -367,9 +367,7 @@ export class WebConsole {
         this.streamTimer = undefined;
       }
     });
-    if (!this.streamTimer) {
-      this.streamTimer = setInterval(() => this.checkStreams(), 1000).unref();
-    }
+    this.streamTimer ??= setInterval(() => this.checkStreams(), 1000).unref();
   }
   private async authenticate<T>(
     req: IncomingMessage,
@@ -571,12 +569,13 @@ export class WebConsole {
   private async serveAsset(res: ServerResponse, route: string): Promise<void> {
     const file = route === "/" ? "index.html" : route.slice(1);
     const data = await readFile(new URL(file, this.assets));
+    const assetTypes: Record<string, string> = {
+      html: "text/html",
+      css: "text/css",
+    };
+    const assetType = assetTypes[file.split(".").at(-1)!] ?? "text/javascript";
     res.writeHead(200, {
-      "Content-Type": file.endsWith(".html")
-        ? "text/html; charset=utf-8"
-        : file.endsWith(".css")
-          ? "text/css; charset=utf-8"
-          : "text/javascript; charset=utf-8",
+      "Content-Type": `${assetType}; charset=utf-8`,
     });
     res.end(data);
   }
@@ -838,12 +837,14 @@ export class WebConsole {
       .dispatch(args, (chunk) => {
         // The raw CLI stream is never returned to the browser or global logs.
         output = (output + chunk).slice(-8192);
-        const match = output.match(
-          /https:\/\/(?:github\.com\/login\/device|(?:login\.microsoftonline\.com|login\.microsoft\.com|microsoft\.com)\/device(?:login)?)/i,
-        );
-        const code = output.match(
-          /\b(?:code|código)\s+([A-Z0-9]{4}-[A-Z0-9]{4}|[A-Z0-9]{8,12})\b/i,
-        );
+        const match =
+          /https:\/\/(?:github\.com\/login\/device|(?:login\.microsoftonline\.com|login\.microsoft\.com|microsoft\.com)\/device(?:login)?)/i.exec(
+            output,
+          );
+        const code =
+          /\b(?:code|código)\s+([A-Z0-9]{4}-[A-Z0-9]{4}|[A-Z0-9]{8,12})\b/i.exec(
+            output,
+          );
         if (match && code) {
           job.device = { url: match[0], code: code[1] };
         }

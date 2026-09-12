@@ -19,6 +19,7 @@ const images = [
         "build-mime-backport",
         "native-mime-regression.c",
         "package-native-libraries.mjs",
+        "native-metadata.mjs",
         "p11-kit-module-soname.patch",
       ].map((f) => `images/hub/bin/${f}`),
     ],
