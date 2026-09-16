@@ -10,7 +10,7 @@ RUN npm run build && npm prune --omit=dev --ignore-scripts
 
 # Same Ubuntu ABI as the runtime. Sources are checksum-pinned, compiled, tested
 # and packaged with ownership/provenance; never overlay untracked shared objects.
-FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d AS native
+FROM ubuntu:26.04@sha256:cd21a4f68a617580279d4b091cb18e3af9fa8a87500665f0ae5f7f757d17d367 AS native
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential binutils dpkg-dev ca-certificates curl xz-utils patch \
     cmake meson ninja-build pkg-config gettext libffi-dev libpcre2-dev \
@@ -32,7 +32,7 @@ RUN sh /build-tools/build-mime-backport
 COPY bin/package-native-libraries.mjs bin/native-metadata.mjs /build-tools/
 RUN sh /build-tools/build-native-libraries package
 
-FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d
+FROM ubuntu:26.04@sha256:cd21a4f68a617580279d4b091cb18e3af9fa8a87500665f0ae5f7f757d17d367
 ARG TARGETARCH
 ARG DEVTUNNEL_VERSION=1.0.2030
 ARG DEVTUNNEL_SHA256
