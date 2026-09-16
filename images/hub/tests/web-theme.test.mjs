@@ -10,7 +10,8 @@ function fixture({ stored = null, dark = false, blocked = false } = {}) {
   const docEvents = {},
     winEvents = {},
     mediaEvents = {},
-    attributes = {};
+    attributes = {},
+    themeMeta = {};
   const media = {
     matches: dark,
     addEventListener: (name, fn) => {
@@ -19,6 +20,14 @@ function fixture({ stored = null, dark = false, blocked = false } = {}) {
   };
   const document = {
     documentElement: { dataset: {} },
+    querySelector: (selector) =>
+      selector === 'meta[name="theme-color"]'
+        ? {
+            setAttribute: (key, value) => {
+              themeMeta[key] = value;
+            },
+          }
+        : null,
     querySelectorAll: () => [
       {
         setAttribute: (key, value) => {
@@ -58,6 +67,7 @@ function fixture({ stored = null, dark = false, blocked = false } = {}) {
     theme: () => document.documentElement.dataset.theme,
     stored: () => stored,
     label: () => attributes["aria-label"],
+    themeColor: () => themeMeta.content,
     click: (toggle = true) =>
       docEvents.click({ target: { closest: () => toggle } }),
     system: (value) => {
@@ -71,9 +81,11 @@ function fixture({ stored = null, dark = false, blocked = false } = {}) {
 test("theme follows system until explicitly selected and updates accessible labels", () => {
   const f = fixture();
   assert.equal(f.theme(), "light");
+  assert.equal(f.themeColor(), "#f3f7fa");
   assert.equal(f.label(), "Ativar modo escuro");
   f.system(true);
   assert.equal(f.theme(), "dark");
+  assert.equal(f.themeColor(), "#0b141c");
   assert.equal(f.label(), "Ativar modo claro");
   f.click();
   assert.equal(f.theme(), "light");

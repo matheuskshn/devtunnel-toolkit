@@ -47,6 +47,7 @@ import { launch, terminate, command, cleanEnvironment } from "./processes.js";
 import { ControlStore } from "./web/control.js";
 import { webOptions } from "./web/security.js";
 import { WebConsole } from "./web/server.js";
+import { infrastructureFields } from "./environment.js";
 
 export class Manager {
   readonly store: StateStore;
@@ -75,6 +76,9 @@ export class Manager {
     readonly dataDir: string,
     readonly runDir: string,
     readonly persistence?: Persistence,
+    readonly environment: NodeJS.ProcessEnv = process.env,
+    readonly rawEnvironment: NodeJS.ProcessEnv = process.env,
+    readonly storageBackend = "filesystem",
   ) {
     this.store = new StateStore(dataDir, config, persistence);
   }
@@ -91,7 +95,7 @@ export class Manager {
   async open(): Promise<void> {
     await privateDirectory(this.runDir);
     await this.store.load();
-    const options = webOptions(process.env);
+    const options = webOptions(this.environment);
     if (options) {
       this.webPort = options.port;
       this.control = new ControlStore(this.store, options.key, () =>
@@ -121,6 +125,16 @@ export class Manager {
           dispatch: (args, output) => this.dispatch(args, output),
           policy: (value, persist) => this.applyPolicy(value, persist),
           track: (operation) => this.track(operation),
+          infrastructure: () =>
+            infrastructureFields(this.rawEnvironment, this.environment, {
+              HUB_RUN_DIR: this.runDir,
+              HUB_ID: this.config.hubId,
+              HUB_STORAGE_BACKEND: this.storageBackend,
+              HUB_PG_PORT: this.environment.HUB_PG_PORT ?? "5432",
+              HUB_PG_SSLMODE: this.environment.HUB_PG_SSLMODE ?? "verify-full",
+              HUB_CREDENTIAL_KEY_ID:
+                this.environment.HUB_CREDENTIAL_KEY_ID ?? "primary",
+            }),
         },
         this.control,
         options,
@@ -585,6 +599,14 @@ export class Manager {
         passwordChangePending: true,
         passwordChangeRequired: this.web?.options.requirePasswordChange ?? true,
       };
+    }
+    if (args[0] === "setup") {
+      check(!this.stopping && this.web, "WEB_DISABLED");
+      check(args.length === 2 && ["token", "status"].includes(args[1]), "USAGE");
+      if (args[1] === "status") return this.web.setupStatus();
+      const token = this.web.issueSetupToken();
+      this.log("console_setup_token_issued");
+      return { token, expiresInSeconds: 600 };
     }
     check(args[0] === "session", "USAGE");
     const [, operation, id, ...flags] = args;

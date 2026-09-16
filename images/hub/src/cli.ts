@@ -4,11 +4,13 @@ import { Manager } from './manager.js';
 import { loadConfig } from './config.js';
 import { errorCode, check } from './model.js';
 import {PostgresPersistence, postgresConfig} from './postgres.js';
+import { resolveRuntimeEnvironment } from './environment.js';
 
 process.umask(0o077);
 const args = process.argv.slice(2);
-const runDir = process.env.HUB_RUN_DIR ?? '/run/hub';
-const dataDir = process.env.HUB_DATA_DIR ?? '/data';
+const environment = resolveRuntimeEnvironment(process.env);
+const runDir = environment.HUB_RUN_DIR ?? '/run/hub';
+const dataDir = environment.HUB_DATA_DIR ?? '/data';
 if (args[0] === 'serve') {
   let manager: Manager | undefined;
   let postgres: PostgresPersistence | undefined;
@@ -25,13 +27,13 @@ if (args[0] === 'serve') {
   };
   try {
     if (process.env.HUB_LOCKED !== '1') throw new Error('Use the hub wrapper to acquire the storage lock');
-    const config = await loadConfig(), backend = process.env.HUB_STORAGE_BACKEND ?? 'filesystem';
+    const config = await loadConfig(undefined, environment), backend = environment.HUB_STORAGE_BACKEND ?? 'filesystem';
     check(['filesystem','postgres'].includes(backend), 'INVALID_STORAGE_BACKEND');
     if (backend === 'postgres') {
-      postgres = new PostgresPersistence(await postgresConfig(process.env), config.hubId, process.env, () => { if (manager) shutdown(true); });
+      postgres = new PostgresPersistence(await postgresConfig(environment), config.hubId, environment, () => { if (manager) shutdown(true); });
       await postgres.open(runDir);
     }
-    manager = new Manager(config, postgres?.directory ?? dataDir, runDir, postgres);
+    manager = new Manager(config, postgres?.directory ?? dataDir, runDir, postgres, environment, process.env, backend);
     process.on('SIGTERM', () => shutdown()); process.on('SIGINT', () => shutdown());
     await manager.open();
   } catch (e) {
@@ -41,11 +43,11 @@ if (args[0] === 'serve') {
   }
 } else if (args[0] === 'health') {
   try {
-    const config = await loadConfig();
+    const config = await loadConfig(undefined, environment);
     const res = await fetch(`http://127.0.0.1:${config.healthPort}/ready`, { signal: AbortSignal.timeout(2000) });
     process.exitCode = res.ok ? 0 : 1;
   } catch { process.exitCode = 1; }
-} else if (args[0] === 'session' || args[0] === 'admin') {
+} else if (args[0] === 'session' || args[0] === 'admin' || args[0] === 'setup') {
   if (args[0] === 'admin') {
     try {
       check(args.length===4 && args[1]==='reset-password' && args[3]==='--password-stdin', 'USAGE');
@@ -72,6 +74,7 @@ if (args[0] === 'serve') {
   process.stdout.write('Usage: hub serve | health | session list\n' +
     '       hub session add ID [--provider microsoft|github] [--tunnel-name NAME]\n' +
     '       hub session login|start|stop|status|logout|remove ID\n' +
-    '       hub admin reset-password USERNAME --password-stdin\n');
+    '       hub admin reset-password USERNAME --password-stdin\n' +
+    '       hub setup token | status\n');
   if (args.length && !['help','--help','-h'].includes(args[0])) process.exitCode = 1;
 }

@@ -13,6 +13,9 @@
     const systemTheme = system.matches ? "dark" : "light";
     const theme = valid(preference) ? preference : systemTheme;
     document.documentElement.dataset.theme = theme;
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute("content", theme === "dark" ? "#0b141c" : "#f3f7fa");
     const label = theme === "dark" ? "Ativar modo claro" : "Ativar modo escuro";
     document.querySelectorAll("[data-theme-toggle]").forEach((button) => {
       button.setAttribute("aria-label", label);

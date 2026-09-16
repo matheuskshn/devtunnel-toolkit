@@ -5,7 +5,7 @@ import {
   type Server,
 } from "node:http";
 import { readFile } from "node:fs/promises";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   check,
   DEFAULT_PROXY_PORT,
@@ -46,6 +46,12 @@ import {
   ldapLogin,
   type LoginFlow,
 } from "./providers.js";
+import {
+  infrastructureSecrets,
+  publicInfrastructureProfile,
+  updateInfrastructureProfile,
+  type InfrastructureField,
+} from "../environment.js";
 
 export interface ConsoleHost {
   config: Config;
@@ -54,6 +60,7 @@ export interface ConsoleHost {
   dispatch(args: string[], output: (chunk: string) => void): Promise<unknown>;
   policy(value: Partial<Config>, persist: () => Promise<void>): Promise<void>;
   track<T>(operation: Promise<T>): Promise<T>;
+  infrastructure?(): InfrastructureField[];
 }
 interface Job {
   id: string;
@@ -130,6 +137,9 @@ const errorStatuses = new Map<string, number>([
   ["CONFIG_CONFLICT", 409],
   ["SESSION_BUSY", 409],
   ["STOP_SESSIONS_FIRST", 409],
+  ["SETUP_REQUIRED", 409],
+  ["SETUP_ALREADY_COMPLETED", 409],
+  ["SETUP_TOKEN_REQUIRED", 401],
   ["INTERNAL_ERROR", 500],
 ]);
 export class WebConsole {
@@ -145,6 +155,11 @@ export class WebConsole {
   private readonly streams = new Set<EventClient>();
   private streamTimer?: NodeJS.Timeout;
   private readonly streamEpoch = randomUUID();
+  private setupToken?: { hash: Buffer; expires: number };
+  private readonly setupSessions = new Map<
+    string,
+    { csrf: string; expires: number }
+  >();
   constructor(
     readonly host: ConsoleHost,
     readonly control: ControlStore,
@@ -205,6 +220,21 @@ export class WebConsole {
     this.server?.closeAllConnections();
     this.browsers.clear();
     this.flows.clear();
+    this.setupToken = undefined;
+    this.setupSessions.clear();
+  }
+  setupStatus() {
+    return { required: this.control.setupRequired() };
+  }
+  issueSetupToken(): string {
+    check(this.control.setupRequired(), "SETUP_ALREADY_COMPLETED");
+    const token = randomToken();
+    this.setupToken = {
+      hash: createHash("sha256").update(token).digest(),
+      expires: Date.now() + 600000,
+    };
+    this.setupSessions.clear();
+    return token;
   }
   private overview(user: User) {
     return {
@@ -492,13 +522,30 @@ export class WebConsole {
     const route = url.pathname;
     if (
       req.method === "GET" &&
-      ["/", "/app.js", "/app.css", "/theme.js"].includes(route)
+      [
+        "/",
+        "/app.js",
+        "/app.css",
+        "/theme.js",
+        "/brand/mark-light.svg",
+        "/brand/mark-dark.svg",
+        "/brand/mark-contrast.svg",
+        "/brand/favicon.svg",
+      ].includes(route)
     ) {
       return this.serveAsset(res, route);
     }
     switch (req.method + ":" + route) {
       case "GET:/favicon.ico":
         return this.serveFavicon(res);
+      case "GET:/api/setup/status":
+        return this.publicSetupStatus(res);
+      case "POST:/api/setup/unlock":
+        return this.setupUnlock(req, res);
+      case "GET:/api/setup/context":
+        return this.setupContext(req, res);
+      case "POST:/api/setup/complete":
+        return this.setupComplete(req, res);
       case "GET:/api/auth/options":
         return this.authOptions(res);
       case "POST:/api/auth/login":
@@ -558,13 +605,16 @@ export class WebConsole {
         return this.configuration(res, user);
       case "POST:/api/config":
         return this.updatePolicy(req, res, user, input);
+      case "POST:/api/config/infrastructure":
+        return this.updateInfrastructure(req, res, user, input);
+      case "POST:/api/config/infrastructure/secrets":
+        return this.revealInfrastructureSecrets(req, res, user, input);
       default:
         check(false, "NOT_FOUND");
     }
   }
   private async serveFavicon(res: ServerResponse): Promise<void> {
-    res.writeHead(204);
-    res.end();
+    return this.serveAsset(res, "/brand/favicon.svg");
   }
   private async serveAsset(res: ServerResponse, route: string): Promise<void> {
     const file = route === "/" ? "index.html" : route.slice(1);
@@ -572,6 +622,7 @@ export class WebConsole {
     const assetTypes: Record<string, string> = {
       html: "text/html",
       css: "text/css",
+      svg: "image/svg+xml",
     };
     const assetType = assetTypes[file.split(".").at(-1)!] ?? "text/javascript";
     res.writeHead(200, {
@@ -579,7 +630,129 @@ export class WebConsole {
     });
     res.end(data);
   }
+  private get setupCookie(): string {
+    return this.options.secure ? "__Host-hub-setup" : "hub-local-setup";
+  }
+  private pruneSetupSessions(): void {
+    for (const [key, session] of this.setupSessions) {
+      if (session.expires <= Date.now()) this.setupSessions.delete(key);
+    }
+  }
+  private setupSession(req: IncomingMessage): { csrf: string; expires: number } {
+    this.pruneSetupSessions();
+    check(this.control.setupRequired(), "SETUP_ALREADY_COMPLETED");
+    const token = cookie(req, this.setupCookie);
+    check(token && /^[A-Za-z0-9_-]{43}$/.test(token), "SETUP_TOKEN_REQUIRED");
+    const session = this.setupSessions.get(
+      createHash("sha256").update(token).digest("hex"),
+    );
+    check(session && session.expires > Date.now(), "SETUP_TOKEN_REQUIRED");
+    return session;
+  }
+  private async publicSetupStatus(res: ServerResponse): Promise<void> {
+    json(res, {
+      required: this.control.setupRequired(),
+      protected: true,
+    });
+  }
+  private async setupUnlock(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    check(this.control.setupRequired(), "SETUP_ALREADY_COMPLETED");
+    const input = await body(req);
+    fields(input, ["token"]);
+    const token = string(input.token, 128);
+    await this.authenticate(req, async () => {
+      this.limits.take(`setup:${req.socket.remoteAddress}`, 8, 600000);
+      const candidate = createHash("sha256").update(token).digest();
+      const expected = this.setupToken?.hash ?? Buffer.alloc(32);
+      const valid =
+        !!this.setupToken &&
+        this.setupToken.expires > Date.now() &&
+        timingSafeEqual(candidate, expected);
+      check(valid, "SETUP_TOKEN_REQUIRED");
+      this.setupToken = undefined;
+      this.setupSessions.clear();
+      const browserToken = randomToken();
+      this.setupSessions.set(
+        createHash("sha256").update(browserToken).digest("hex"),
+        { csrf: randomToken(), expires: Date.now() + 900000 },
+      );
+      setCookie(res, this.setupCookie, browserToken, this.options.secure, 900);
+      json(res, { ok: true });
+    });
+  }
+  private async setupContext(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const session = this.setupSession(req);
+    json(res, {
+      csrf: session.csrf,
+      revision: this.control.data.revision,
+      config: this.host.config,
+      infrastructure: this.host.infrastructure?.() ?? [],
+      infrastructureProfile: publicInfrastructureProfile(
+        this.control.data.infrastructure,
+      ),
+      deploymentManaged: true,
+    });
+  }
+  private async setupComplete(
+    req: IncomingMessage,
+    res: ServerResponse,
+  ): Promise<void> {
+    const setup = this.setupSession(req);
+    check(req.headers["x-csrf-token"] === setup.csrf, "CSRF_REJECTED");
+    const input = await body(req);
+    fields(input, [
+      "password",
+      "passwordConfirmation",
+      "policy",
+      "infrastructure",
+      "revision",
+    ]);
+    check(input.password === input.passwordConfirmation, "PASSWORD_MISMATCH");
+    check(
+      input.policy &&
+        typeof input.policy === "object" &&
+        !Array.isArray(input.policy),
+      "INVALID_CONFIG",
+    );
+    fields(input.policy as Record<string, unknown>, policyKeys);
+    const infrastructure = updateInfrastructureProfile(
+      {},
+      input.infrastructure ?? {},
+    );
+    const expected = revision(input.revision);
+    const password = string(input.password, 1024);
+    const passwordHash = await this.authenticate(req, () =>
+      hashPassword(password),
+    );
+    const policy = input.policy as Partial<Config>;
+    await this.host.policy(policy, () =>
+      this.control.update((draft) => {
+        check(this.control.setupRequired(), "SETUP_ALREADY_COMPLETED");
+        const admin = draft.users.find((user) => user.id === "admin");
+        check(admin && admin.local, "RECOVERY_ADMIN_MISSING");
+        admin.password = passwordHash;
+        admin.mustChange = false;
+        admin.epoch++;
+        draft.policy = { ...draft.policy, ...policy };
+        draft.infrastructure = infrastructure;
+        draft.setupCompletedAt = new Date().toISOString();
+      }, expected),
+    );
+    const admin = this.control.user("admin");
+    this.setupSessions.clear();
+    setCookie(res, this.setupCookie, "", this.options.secure, 0);
+    this.browsers.create(res, admin);
+    this.audit("console_setup_completed", admin);
+    json(res, { ok: true });
+  }
   private async authOptions(res: ServerResponse): Promise<void> {
+    check(!this.control.setupRequired(), "SETUP_REQUIRED");
     json(res, {
       providers: this.control.data.providers
         .filter((p) => p.enabled)
@@ -590,6 +763,7 @@ export class WebConsole {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
+    check(!this.control.setupRequired(), "SETUP_REQUIRED");
     const input = await body(req);
     fields(input, ["username", "password", "provider"]);
     const username = string(input.username, 256),
@@ -635,6 +809,7 @@ export class WebConsole {
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
+    check(!this.control.setupRequired(), "SETUP_REQUIRED");
     const input = await body(req);
     fields(input, ["provider"]);
     await this.authenticate(req, async () => {
@@ -1049,6 +1224,10 @@ export class WebConsole {
     json(res, {
       config: this.host.config,
       policyKeys,
+      infrastructure: this.host.infrastructure?.() ?? [],
+      infrastructureProfile: publicInfrastructureProfile(
+        this.control.data.infrastructure,
+      ),
       revision: this.control.data.revision,
       override: !!this.control.data.policy,
     });
@@ -1082,6 +1261,58 @@ export class WebConsole {
     );
     this.audit("console_policy_updated", user);
     json(res, { ok: true });
+  }
+  private async updateInfrastructure(
+    req: IncomingMessage,
+    res: ServerResponse,
+    user: User,
+    input: Record<string, unknown>,
+  ): Promise<void> {
+    this.admin(user);
+    fields(input, ["infrastructure", "revision"]);
+    const next = updateInfrastructureProfile(
+      this.control.data.infrastructure,
+      input.infrastructure,
+    );
+    const changed = Object.keys(input.infrastructure as object);
+    await this.update(
+      req,
+      user,
+      (draft) => {
+        draft.infrastructure = next;
+      },
+      revision(input.revision),
+    );
+    this.audit("console_infrastructure_profile_updated", user, {
+      fields: changed,
+    });
+    json(res, { ok: true, restartRequired: true });
+  }
+  private async revealInfrastructureSecrets(
+    req: IncomingMessage,
+    res: ServerResponse,
+    user: User,
+    input: Record<string, unknown>,
+  ): Promise<void> {
+    this.admin(user);
+    fields(input, ["password"]);
+    const password = string(input.password, 1024);
+    await this.authenticate(req, async () => {
+      this.limits.take(`infrastructure-secrets:${user.id}`, 5, 300000);
+      const recovery = this.control.data.users.find(
+        (candidate) => candidate.id === "admin" && candidate.local,
+      );
+      check(
+        recovery &&
+          !recovery.disabled &&
+          (await verifyPassword(password, recovery.password)),
+        "LOGIN_FAILED",
+      );
+      this.audit("console_infrastructure_secrets_revealed", user);
+      json(res, {
+        secrets: infrastructureSecrets(this.control.data.infrastructure),
+      });
+    });
   }
   private get flowCookie() {
     return this.options.secure ? "__Host-hub-flow" : "hub-local-flow";

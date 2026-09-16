@@ -120,6 +120,21 @@ test("CLI streams output and structured results through its local manager socket
   assert.match(result.stdout, /"ok": true/);
 });
 
+test("CLI requests first-run status and token only through the private manager socket", async (t) => {
+  const { env, dir } = await fixture(t);
+  let request;
+  await manager(
+    t,
+    dir,
+    '{"result":{"required":true}}\n',
+    (args) => (request = args),
+  );
+  const result = await run(["setup", "status"], env);
+  assert.equal(result.status, 0);
+  assert.deepEqual(request, ["setup", "status"]);
+  assert.match(result.stdout, /"required": true/);
+});
+
 for (const [name, response, expected] of [
   ["structured error", '{"error":"AUTH_REQUIRED"}\n', "AUTH_REQUIRED"],
   ["malformed response", "not-json\n", ""],

@@ -109,6 +109,17 @@ const messages = {
     "O administrador local de recuperação não pode ser desativado ou rebaixado.",
   SELF_LOCKOUT_PREVENTED:
     "Você não pode remover seu próprio acesso administrativo.",
+  SETUP_REQUIRED: "Conclua a configuração inicial para acessar o Hub.",
+  SETUP_ALREADY_COMPLETED: "A configuração inicial já foi concluída.",
+  SETUP_TOKEN_REQUIRED: "Código de configuração inválido ou expirado.",
+  PASSWORD_MISMATCH: "As senhas informadas não são iguais.",
+  ENV_REFERENCE_REQUIRED: "A variável de ambiente referenciada não foi definida.",
+  INVALID_ENV_REFERENCE: "A referência de variável de ambiente é inválida.",
+  INVALID_INFRASTRUCTURE: "O perfil de infraestrutura é inválido.",
+  INVALID_INFRASTRUCTURE_VALUE:
+    "Revise os valores do perfil de infraestrutura.",
+  UNKNOWN_INFRASTRUCTURE_FIELD:
+    "O perfil contém uma variável que não é gerenciada pelo Hub.",
 };
 let me,
   csrf = "",
@@ -172,11 +183,14 @@ function toast(message) {
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => $("#toast").classList.remove("show"), 5000);
 }
+const brandMark = () =>
+  `<span class="brand-mark" aria-hidden="true"><img class="brand-logo brand-logo-light" src="/brand/mark-light.svg" alt=""><img class="brand-logo brand-logo-dark" src="/brand/mark-dark.svg" alt=""><img class="brand-logo brand-logo-contrast" src="/brand/mark-contrast.svg" alt=""></span>`;
 const brand = () =>
-  `<div class="brand"><span class="brand-mark">${icon("tunnel")}</span><div>DevTunnel Toolkit<small>HUB CONSOLE</small></div></div>`;
+  `<div class="brand">${brandMark()}<div>DevTunnel Toolkit<small>HUB CONSOLE</small></div></div>`;
 const empty = (title, text, kind = "tunnel") =>
   `<div class="empty">${icon(kind)}<h3>${escapeHtml(title)}</h3><p>${escapeHtml(text)}</p></div>`;
 function modal(title, subtitle, content) {
+  dialog.className = "";
   dialog.innerHTML = `<div class="dialog-head"><div><h2>${escapeHtml(title)}</h2><p>${escapeHtml(subtitle)}</p></div><button class="ghost" data-close aria-label="Fechar">${icon("close")}</button></div><div class="dialog-body">${content}</div>`;
   if (!dialog.open) dialog.showModal();
   dialog.scrollTop = 0;
@@ -239,6 +253,183 @@ function wireForm(callback) {
 }
 function loginProviderButton(provider) {
   return `<button data-sso="${escapeHtml(provider.id)}">${icon("shield")}Continuar com ${escapeHtml(provider.label)}${icon("arrow")}</button>`;
+}
+const infrastructureSource = {
+  environment: "Variável do container",
+  "environment-reference": "Referência de ambiente",
+  default: "Padrão",
+};
+const infrastructureLabels = Object.freeze({
+  HUB_RUN_DIR: "Diretório de execução",
+  HUB_ID: "Identificador do Hub",
+  HUB_STORAGE_BACKEND: "Backend de armazenamento",
+  HUB_PG_HOST: "Host do PostgreSQL",
+  HUB_PG_PORT: "Porta do PostgreSQL",
+  HUB_PG_DATABASE: "Banco de dados PostgreSQL",
+  HUB_PG_USER: "Usuário do PostgreSQL",
+  HUB_PG_SSLMODE: "Modo TLS do PostgreSQL",
+  HUB_PG_PASSWORD: "Senha do PostgreSQL",
+  HUB_CREDENTIAL_KEY: "Chave de criptografia das credenciais",
+  HUB_CREDENTIAL_KEY_ID: "Identificador da chave de credenciais",
+});
+const infrastructureLabel = (name) => infrastructureLabels[name] ?? name;
+function infrastructureTable(fields = [], profile = []) {
+  const planned = new Map(profile.map((item) => [item.name, item]));
+  const rows = fields
+    .map((item) => {
+      const value = item.sensitive
+        ? item.configured
+          ? "Configurado e oculto"
+          : "Não configurado"
+        : item.value || "Não configurado";
+      const reference = item.reference
+        ? `<small>env://${escapeHtml(item.reference)}</small>`
+        : "";
+      const desired = planned.get(item.name);
+      const desiredValue = desired
+        ? desired.reference
+          ? `env://${desired.reference}`
+          : desired.sensitive
+            ? "Salvo e criptografado"
+            : desired.value
+        : "Seguir executor";
+      const matches =
+        desired &&
+        !desired.sensitive &&
+        (desired.reference
+          ? desired.reference === item.reference
+          : desired.value === item.value);
+      const pending = desired && !matches;
+      return `<tr><td><span class="infrastructure-name"><strong>${escapeHtml(infrastructureLabel(item.name))}</strong><code>${escapeHtml(item.name)}</code></span></td><td>${escapeHtml(infrastructureSource[item.source] ?? item.source)}${reference}</td><td><span class="infrastructure-value">${item.sensitive ? icon("key") : ""}<span>${escapeHtml(value)}</span></span></td><td><span class="infrastructure-value">${desired?.sensitive ? icon("key") : ""}<span>${escapeHtml(desiredValue)}</span></span></td><td><span class="badge ${pending ? "pending" : "active"}">${pending ? "Próximo deploy" : "Atual"}</span></td></tr>`;
+    })
+    .join("");
+  return `<div class="table-wrap"><table class="infrastructure-table"><thead><tr><th>Configuração</th><th>Origem atual</th><th>Valor efetivo</th><th>Valor desejado</th><th>Aplicação</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+const infrastructureNames = Object.keys(infrastructureLabels);
+const infrastructureSecretNames = ["HUB_PG_PASSWORD", "HUB_CREDENTIAL_KEY"];
+function infrastructureInputValue(name, fields, profile) {
+  const planned = profile.find((item) => item.name === name);
+  if (planned?.reference) return `env://${planned.reference}`;
+  if (planned?.value !== undefined) return planned.value;
+  const effective = fields.find((item) => item.name === name);
+  return effective?.sensitive ? "" : (effective?.value ?? "");
+}
+function infrastructureEditor(fields = [], profile = [], clearSecrets = true) {
+  const value = (name) => infrastructureInputValue(name, fields, profile);
+  const secret = (label, name, hint) =>
+    `${field(label, name, "", "password", hint, 'maxlength="4096" autocomplete="new-password"')}${clearSecrets ? `<div class="field secret-clear">${check(`Remover ${label.toLowerCase()} salva`, `clear-${name}`, false)}</div>` : ""}`;
+  return `<div class="form-grid infrastructure-editor">${field(infrastructureLabel("HUB_RUN_DIR"), "HUB_RUN_DIR", value("HUB_RUN_DIR"), "text", "Caminho absoluto ou env://NOME.", 'required maxlength="512"')}${field(infrastructureLabel("HUB_ID"), "HUB_ID", value("HUB_ID"), "text", "Nome estável ou env://NOME.", 'required maxlength="64"')}${field(infrastructureLabel("HUB_STORAGE_BACKEND"), "HUB_STORAGE_BACKEND", value("HUB_STORAGE_BACKEND"), "text", "filesystem, postgres ou env://NOME.", 'required maxlength="128"')}${field(infrastructureLabel("HUB_PG_HOST"), "HUB_PG_HOST", value("HUB_PG_HOST"), "text", "Pode usar env://NOME.", 'maxlength="512"')}${field(infrastructureLabel("HUB_PG_PORT"), "HUB_PG_PORT", value("HUB_PG_PORT"), "text", "Número ou env://NOME.", 'maxlength="128"')}${field(infrastructureLabel("HUB_PG_DATABASE"), "HUB_PG_DATABASE", value("HUB_PG_DATABASE"), "text", "Pode usar env://NOME.", 'maxlength="512"')}${field(infrastructureLabel("HUB_PG_USER"), "HUB_PG_USER", value("HUB_PG_USER"), "text", "Pode usar env://NOME.", 'maxlength="512"')}${field(infrastructureLabel("HUB_PG_SSLMODE"), "HUB_PG_SSLMODE", value("HUB_PG_SSLMODE"), "text", "verify-full, disable ou env://NOME.", 'required maxlength="128"')}${secret(infrastructureLabel("HUB_PG_PASSWORD"), "HUB_PG_PASSWORD", "Vazio mantém o valor salvo. Aceita env://NOME.")}${secret(infrastructureLabel("HUB_CREDENTIAL_KEY"), "HUB_CREDENTIAL_KEY", "Base64 de 32 bytes ou env://NOME. Vazio mantém o valor salvo.")}${field(infrastructureLabel("HUB_CREDENTIAL_KEY_ID"), "HUB_CREDENTIAL_KEY_ID", value("HUB_CREDENTIAL_KEY_ID"), "text", "Identifica a chave ativa ou usa env://NOME.", 'required maxlength="64"')}</div>`;
+}
+function infrastructurePatch(
+  data,
+  clearSecrets = true,
+  fields = [],
+) {
+  const patch = {};
+  for (const name of infrastructureNames.filter(
+    (candidate) => !infrastructureSecretNames.includes(candidate),
+  )) {
+    const value = String(data.get(name) ?? "").trim();
+    const effective = fields.find((item) => item.name === name);
+    const inherited = effective?.reference
+      ? value === `env://${effective.reference}`
+      : value === (effective?.value ?? "");
+    patch[name] = value && !inherited ? value : null;
+  }
+  for (const name of infrastructureSecretNames) {
+    const value = String(data.get(name) ?? "");
+    const effective = fields.find((item) => item.name === name);
+    if (value && value === `env://${effective?.reference}`) patch[name] = null;
+    else if (value) patch[name] = value;
+    else if (clearSecrets && data.has(`clear-${name}`)) patch[name] = null;
+  }
+  return patch;
+}
+function setupPolicy(data) {
+  const policy = {
+    tunnelNameTemplate: data.get("tunnelNameTemplate"),
+    proxyPort: Number(data.get("proxyPort")),
+    socksPort: Number(data.get("socksPort")),
+    maxSessions: Number(data.get("maxSessions")),
+    maintenanceSeconds: Number(data.get("maintenanceSeconds")),
+    allowedPorts: String(data.get("allowedPorts"))
+      .split(",")
+      .map((value) => Number(value.trim())),
+    connectPorts: String(data.get("connectPorts"))
+      .split(",")
+      .map((value) => Number(value.trim())),
+    allowedDomains: String(data.get("allowedDomains"))
+      .split(/[\n,]/)
+      .map((value) => value.trim())
+      .filter(Boolean),
+    allowedMicrosoftTenants: String(data.get("allowedMicrosoftTenants"))
+      .split(/[\n,]/)
+      .map((value) => value.trim())
+      .filter(Boolean),
+    allowAllDomains: data.has("allowAllDomains"),
+    socksEnabled: data.has("socksEnabled"),
+    allowedProviders: ["microsoft", "github"].filter((provider) =>
+      data.has(provider),
+    ),
+  };
+  return policy;
+}
+async function setupWizard() {
+  const context = await api("/setup/context");
+  csrf = context.csrf;
+  const c = context.config;
+  app.innerHTML = `<main class="setup-page"><div class="setup-top">${brand()}${themeToggle()}</div><div class="setup-heading"><span class="eyebrow">CONFIGURAÇÃO INICIAL</span><h1>Prepare seu DevTunnel Toolkit</h1><p>Revise a infraestrutura, defina a política de acesso e proteja a conta administrativa.</p></div><ol class="setup-steps" aria-label="Etapas"><li class="done">1<span>Acesso</span></li><li class="active">2<span>Infraestrutura</span></li><li class="active">3<span>Política</span></li><li class="active">4<span>Administrador</span></li></ol><form id="setup-form"><section class="panel"><div class="panel-head"><div><span class="eyebrow">ETAPA 2</span><h2>Infraestrutura do container</h2></div>${icon("shield")}</div><div class="panel-body"><div class="note">Edite o perfil desejado para o próximo deploy ou reinício. Referências <code>env://NOME</code> são aceitas. O executor precisa receber esses valores para aplicá-los.</div>${infrastructureEditor(context.infrastructure, context.infrastructureProfile, false)}<details class="effective-infrastructure"><summary>Ver valores efetivos desta execução</summary>${infrastructureTable(context.infrastructure, context.infrastructureProfile)}</details></div></section><section class="panel"><div class="panel-head"><div><span class="eyebrow">ETAPA 3</span><h2>Política de túneis</h2></div>${icon("settings")}</div><div class="panel-body"><div class="form-grid"><div class="field full">${check("Habilitar SOCKS5 TCP CONNECT", "socksEnabled", c.socksEnabled)}</div>${field("Porta HTTP / CONNECT", "proxyPort", c.proxyPort, "number", "Padrão 3140.", 'required min="1024" max="65535"')}${field("Porta SOCKS5", "socksPort", c.socksPort, "number", "Padrão 3180.", 'required min="1024" max="65535"')}${field("Template dos túneis", "tunnelNameTemplate", c.tunnelNameTemplate, "text", "Use {hub_id} e {username}.", "required")}${field("Limite de sessões", "maxSessions", c.maxSessions, "number", "", 'required min="1" max="500"')}${field("Portas permitidas", "allowedPorts", c.allowedPorts.join(","), "text", "Separadas por vírgula.", "required")}${field("Portas CONNECT", "connectPorts", c.connectPorts.join(","), "text", "Devem estar nas portas permitidas.", "required")}${field("Manutenção em segundos", "maintenanceSeconds", c.maintenanceSeconds, "number", "", 'required min="60" max="3600"')}${area("Domínios permitidos", "allowedDomains", c.allowedDomains.join("\n"), "Um por linha. Vazio bloqueia todos.")}${area("Tenants Microsoft", "allowedMicrosoftTenants", c.allowedMicrosoftTenants.join("\n"), "UUIDs, um por linha. Vazio aceita qualquer tenant.")}<div class="field full check-grid">${check("Microsoft", "microsoft", c.allowedProviders.includes("microsoft"))}${check("GitHub", "github", c.allowedProviders.includes("github"))}${check("Permitir todos os domínios e IPs", "allowAllDomains", c.allowAllDomains)}</div></div></div></section><section class="panel"><div class="panel-head"><div><span class="eyebrow">ETAPA 4</span><h2>Administrador de recuperação</h2></div>${icon("key")}</div><div class="panel-body"><div class="note">A senha é derivada com scrypt e o estado do console é criptografado. A recuperação continua disponível pelo CLI do container.</div><div class="form-grid">${field("Senha do administrador", "password", "", "password", "Mínimo de 14 caracteres.", 'required minlength="14" maxlength="1024" autocomplete="new-password"')}${field("Confirmar senha", "passwordConfirmation", "", "password", "", 'required minlength="14" maxlength="1024" autocomplete="new-password"')}</div></div></section><p class="form-error" role="alert"></p><div class="setup-actions"><span>As configurações serão validadas antes da conclusão.</span><button class="primary" type="submit">Concluir configuração ${icon("arrow")}</button></div></form></main>`;
+  const form = $("#setup-form");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('[type="submit"]');
+    const error = form.querySelector(".form-error");
+    button.disabled = true;
+    error.textContent = "";
+    try {
+      const data = new FormData(form);
+      await api("/setup/complete", {
+        password: data.get("password"),
+        passwordConfirmation: data.get("passwordConfirmation"),
+        policy: setupPolicy(data),
+        infrastructure: infrastructurePatch(data, false, context.infrastructure),
+        revision: context.revision,
+      });
+      csrf = "";
+      await bootstrap();
+      toast("Configuração inicial concluída.");
+    } catch (failure) {
+      error.textContent = failure.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+async function setupPage() {
+  stopLive();
+  me = undefined;
+  csrf = "";
+  app.innerHTML = `<main class="login-form-area"><div class="login-theme">${themeToggle()}</div><section class="login-form setup-unlock" aria-labelledby="setup-title">${brand()}<span class="eyebrow">PRIMEIRO INÍCIO</span><h1 id="setup-title">Configure seu Hub</h1><p>O acesso inicial é protegido por um código temporário emitido dentro do container.</p><form id="setup-unlock"><label class="field"><span>Código de configuração</span><input name="token" type="password" required autocomplete="one-time-code" maxlength="128" autofocus></label><button class="primary" type="submit">Desbloquear configuração ${icon("arrow")}</button><p class="form-error" role="alert"></p></form><div class="note"><strong>Gere um código pelo CLI:</strong><br><code>hub setup token</code><br>O código vale por 10 minutos e pode ser usado uma única vez.</div></section></main>`;
+  const form = $("#setup-unlock");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const button = form.querySelector('[type="submit"]');
+    button.disabled = true;
+    try {
+      const data = new FormData(form);
+      await api("/setup/unlock", { token: data.get("token") });
+      await setupWizard();
+    } catch (failure) {
+      form.querySelector(".form-error").textContent = failure.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+async function startup() {
+  const setup = await api("/setup/status");
+  if (setup.required) return setupPage();
+  return bootstrap();
 }
 async function loginPage() {
   stopLive();
@@ -612,7 +803,11 @@ function renderSettings(target) {
   const source = catalog.settings.override
     ? "Personalizada no painel"
     : "Ambiente / arquivo";
-  target.innerHTML = `${title}<div class="note warning">Para alterar a política, pare todas as sessões primeiro. Os valores salvos no painel passam a prevalecer sobre as variáveis correspondentes enquanto o console estiver habilitado.</div><div class="split"><section class="panel"><div class="panel-head"><h2>Política operacional</h2><span class="badge">${source}</span></div><div class="panel-body"><dl class="detail-grid">${policyDetails(config)}</dl></div></section><section class="panel"><div class="panel-head"><h2>Infraestrutura</h2>${icon("shield")}</div><div class="panel-body"><div class="note">Estes campos exigem alteração no executor do container e reinício. O console não altera seu ambiente de nuvem, conexões de banco ou chaves mestras.</div><dl class="detail-grid"><dt>Hub ID</dt><dd><code>${escapeHtml(config.hubId)}</code></dd><dt>Listeners</dt><dd><code>${config.listenerStart}..${config.listenerEnd}</code></dd><dt>Health check</dt><dd><code>${config.healthPort}</code></dd></dl></div></section></div>`;
+  const profile = catalog.settings.infrastructureProfile ?? [];
+  const reveal = profile.some((item) => item.sensitive)
+    ? `<button class="small" data-infrastructure-secrets>${icon("key")}Ver segredos salvos</button>`
+    : "";
+  target.innerHTML = `${title}<div class="note warning">Para alterar a política, pare todas as sessões primeiro. Os valores salvos no painel passam a prevalecer sobre as variáveis correspondentes enquanto o console estiver habilitado.</div><div class="split"><section class="panel"><div class="panel-head"><h2>Política operacional</h2><span class="badge">${source}</span></div><div class="panel-body"><dl class="detail-grid">${policyDetails(config)}</dl></div></section><section class="panel"><div class="panel-head"><h2>Runtime</h2>${icon("shield")}</div><div class="panel-body"><div class="note">Listeners e health check são definidos antes da abertura do console.</div><dl class="detail-grid"><dt>Hub ID</dt><dd><code>${escapeHtml(config.hubId)}</code></dd><dt>Listeners</dt><dd><code>${config.listenerStart}..${config.listenerEnd}</code></dd><dt>Health check</dt><dd><code>${config.healthPort}</code></dd></dl></div></section></div><section class="panel infrastructure-panel"><div class="panel-head"><div><h2>Infraestrutura do container</h2><p>Compare a execução atual com o perfil desejado.</p></div><div class="heading-actions">${reveal}<button class="primary small" data-infrastructure>${icon("settings")}Editar infraestrutura</button></div></div><div class="panel-body"><div class="note">O perfil é salvo criptografado pelo Hub. Para aplicá-lo, atualize as variáveis no executor e crie uma nova revisão ou reinicie o container.</div>${infrastructureTable(catalog.settings.infrastructure, profile)}</div></section>`;
 }
 async function loadCatalog(background = false) {
   if (me?.role !== "admin") return;
@@ -1249,6 +1444,45 @@ function providerForm(id, selectedKind = "microsoft") {
     await refresh(true);
   });
 }
+function infrastructureForm() {
+  const settings = catalog.settings;
+  modal(
+    "Editar infraestrutura",
+    "Salve um perfil para aplicar no executor durante o próximo deploy ou reinício.",
+    `<form><div class="note">Valores <code>env://NOME</code> mantêm o segredo no ambiente do executor. Alterar este perfil não modifica diretamente Docker, Kubernetes ou ACA. Mudanças de Hub ID, backend, banco ou chave podem exigir migração do estado existente.</div>${infrastructureEditor(settings.infrastructure, settings.infrastructureProfile)}${formEnd("Salvar perfil")}</form>`,
+  );
+  dialog.className = "dialog-wide";
+  const expected = settings.revision;
+  wireForm(async (data) => {
+    await api("/config/infrastructure", {
+      infrastructure: infrastructurePatch(data, true, settings.infrastructure),
+      revision: expected,
+    });
+    dialog.close();
+    toast("Perfil salvo. Revise a migração e aplique-o no próximo deploy.");
+    await refresh(true);
+  });
+}
+function infrastructureSecretsForm() {
+  modal(
+    "Confirmar acesso aos segredos",
+    "A revelação exige a senha do administrador local de recuperação.",
+    `<form>${field("Senha do administrador", "password", "", "password", "A tentativa é limitada e registrada na auditoria.", 'required maxlength="1024" autocomplete="current-password"')}${formEnd("Revelar segredos")}</form>`,
+  );
+  wireForm(async (data) => {
+    const result = await api("/config/infrastructure/secrets", {
+      password: data.get("password"),
+    });
+    const entries = Object.entries(result.secrets);
+    modal(
+      "Segredos salvos",
+      "Somente valores do perfil criptografado são exibidos. Segredos do ambiente do executor não são retornados.",
+      entries.length
+        ? `<div class="secret-list">${entries.map(([name, value]) => `<div><span>${escapeHtml(name)}</span><code>${escapeHtml(value)}</code></div>`).join("")}</div><div class="form-actions"><button type="button" data-close>Fechar</button></div>`
+        : `<div class="note">Não há segredos literais ou referências secretas salvas no perfil.</div><div class="form-actions"><button type="button" data-close>Fechar</button></div>`,
+    );
+  });
+}
 function policyForm() {
   const c = catalog.settings.config;
   modal(
@@ -1337,6 +1571,8 @@ const clickHandlers = {
   user: (button) => userForm(button.dataset.user),
   provider: (button) => providerForm(button.dataset.provider),
   policy: policyForm,
+  infrastructure: infrastructureForm,
+  infrastructureSecrets: infrastructureSecretsForm,
   pause: pauseLogs,
 };
 document.addEventListener("click", async (event) => {
@@ -1378,6 +1614,6 @@ window.addEventListener("pagehide", stopLive);
 window.addEventListener("pageshow", (event) => {
   if (event.persisted) startLive();
 });
-void bootstrap().catch((e) => {
+void startup().catch((e) => {
   app.textContent = `Não foi possível abrir o Hub: ${e.message}`;
 });

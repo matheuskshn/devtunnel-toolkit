@@ -258,6 +258,20 @@ JSON and errors never echo their contents. If changing `HUB_HEALTH_PORT`, update
 the deployment's HTTP probes to match. Existing state still enforces immutable
 Hub identity and listener assignments.
 
+Bootstrap fields `HUB_RUN_DIR`, `HUB_ID`, `HUB_STORAGE_BACKEND`, `HUB_PG_HOST`,
+`HUB_PG_PORT`, `HUB_PG_DATABASE`, `HUB_PG_USER`, `HUB_PG_SSLMODE`,
+`HUB_PG_PASSWORD`, `HUB_CREDENTIAL_KEY` and `HUB_CREDENTIAL_KEY_ID` also accept
+an explicit `env://VARIABLE_NAME` value. The reference is resolved once at
+startup from the container environment. Missing, malformed, self-referencing or
+nested references fail closed. The web console reports the effective source and
+lets administrators save an encrypted desired deployment profile. Normal API
+responses redact password and key contents. Revealing values stored in the
+profile requires the recovery administrator's password, is rate-limited and is
+audited; executor-owned secrets are never returned. Because a process cannot
+rewrite its parent Docker, Kubernetes or ACA environment, profile changes remain
+pending until they are applied to the executor and the container is replaced or
+restarted.
+
 `HUB_ALLOW_ALL_DOMAINS` accepts only `true` or `false`. When enabled, it bypasses
 the domain allowlist, including for literal IP destinations. The remaining port,
 loopback, link-local/metadata, local-source and enrolled-listener restrictions
