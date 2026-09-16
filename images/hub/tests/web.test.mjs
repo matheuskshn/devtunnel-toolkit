@@ -325,9 +325,13 @@ test("LDAP binds separately, escapes filter, requires exact unique entry and TLS
   );
 });
 
-async function serverFixture(t, requirePasswordChange = true) {
+async function serverFixture(
+  t,
+  requirePasswordChange = true,
+  initializePassword = true,
+) {
   const f = await fixture(t);
-  await f.control.resetPassword("admin", password);
+  if (initializePassword) await f.control.resetPassword("admin", password);
   f.store.add("session-one", "github");
   f.store.add("session-two", "microsoft");
   const socket = createServer();
@@ -409,6 +413,186 @@ async function serverFixture(t, requirePasswordChange = true) {
   });
   return { ...f, web, client, dispatches, pending };
 }
+
+test("first-run setup requires a single-use CLI token and creates the recovery admin", async (t) => {
+  const f = await serverFixture(t, true, false);
+  const status = await fetch(f.web.options.origin + "/api/setup/status");
+  assert.deepEqual(await status.json(), { required: true, protected: true });
+  const deniedLogin = await fetch(f.web.options.origin + "/api/auth/login", {
+    method: "POST",
+    headers: {
+      Origin: f.web.options.origin,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ username: "admin", password }),
+  });
+  assert.equal(deniedLogin.status, 409);
+  assert.equal((await deniedLogin.json()).error, "SETUP_REQUIRED");
+
+  const token = f.web.issueSetupToken();
+  assert.equal(token.length, 43);
+  const unlock = async (candidate) =>
+    fetch(f.web.options.origin + "/api/setup/unlock", {
+      method: "POST",
+      headers: {
+        Origin: f.web.options.origin,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ token: candidate }),
+    });
+  assert.equal((await unlock("wrong-setup-token")).status, 401);
+  const unlocked = await unlock(token);
+  assert.equal(unlocked.status, 200);
+  const setupCookie = unlocked.headers
+    .getSetCookie()
+    .find((value) => value.startsWith("hub-local-setup="))
+    .split(";")[0];
+  const context = await fetch(f.web.options.origin + "/api/setup/context", {
+    headers: { Cookie: setupCookie },
+  });
+  assert.equal(context.status, 200);
+  const setup = await context.json();
+  assert.equal(setup.config.hubId, "devhub");
+  assert.equal(typeof setup.csrf, "string");
+
+  const complete = await fetch(f.web.options.origin + "/api/setup/complete", {
+    method: "POST",
+    headers: {
+      Cookie: setupCookie,
+      Origin: f.web.options.origin,
+      "Content-Type": "application/json",
+      "X-CSRF-Token": setup.csrf,
+    },
+    body: JSON.stringify({
+      password: newPassword,
+      passwordConfirmation: newPassword,
+      policy: {
+        proxyPort: 3140,
+        socksPort: 3180,
+        socksEnabled: true,
+        allowedDomains: ["example.com"],
+        allowAllDomains: false,
+        allowedPorts: [80, 443],
+        connectPorts: [443],
+        allowedProviders: ["microsoft", "github"],
+        allowedMicrosoftTenants: [],
+        tunnelNameTemplate: "{hub_id}-{username}",
+        maxSessions: 50,
+        maintenanceSeconds: 300,
+      },
+      infrastructure: {
+        HUB_RUN_DIR: "/run/next-hub",
+        HUB_ID: "next-hub",
+        HUB_STORAGE_BACKEND: "postgres",
+        HUB_PG_HOST: "env://DATABASE_HOST",
+        HUB_PG_PORT: "5432",
+        HUB_PG_DATABASE: "hub",
+        HUB_PG_USER: "hub_user",
+        HUB_PG_SSLMODE: "verify-full",
+        HUB_PG_PASSWORD: "synthetic-setup-password",
+        HUB_CREDENTIAL_KEY_ID: "primary",
+      },
+      revision: setup.revision,
+    }),
+  });
+  assert.equal(complete.status, 200);
+  const browserCookie = complete.headers
+    .getSetCookie()
+    .find((value) => value.startsWith("hub-local="))
+    .split(";")[0];
+  assert.equal(f.control.setupRequired(), false);
+  assert.equal(f.control.user("admin").mustChange, false);
+  assert.equal(await verifyPassword(newPassword, f.control.user("admin").password), true);
+  assert.equal(f.config.socksEnabled, true);
+  assert.equal(f.control.data.infrastructure.HUB_ID, "next-hub");
+  assert.equal(
+    f.control.data.infrastructure.HUB_PG_PASSWORD,
+    "synthetic-setup-password",
+  );
+  const me = await fetch(f.web.options.origin + "/api/me", {
+    headers: { Cookie: browserCookie },
+  });
+  assert.equal(me.status, 200);
+  assert.equal((await me.json()).user.id, "admin");
+  assert.throws(() => f.web.issueSetupToken(), {
+    code: "SETUP_ALREADY_COMPLETED",
+  });
+  assert.deepEqual(await (await fetch(f.web.options.origin + "/api/setup/status")).json(), {
+    required: false,
+    protected: true,
+  });
+});
+
+test("infrastructure profile is encrypted, editable and reveals secrets only after recovery reauthentication", async (t) => {
+  const f = await serverFixture(t, false),
+    admin = f.client(),
+    credential = key();
+  await admin.login();
+  const initial = await admin.request("/api/config");
+  assert.equal(initial.status, 200);
+  const saved = await admin.request("/api/config/infrastructure", {
+    infrastructure: {
+      HUB_RUN_DIR: "/run/next-hub",
+      HUB_ID: "next-hub",
+      HUB_STORAGE_BACKEND: "postgres",
+      HUB_PG_HOST: "env://DATABASE_HOST",
+      HUB_PG_PORT: "5432",
+      HUB_PG_DATABASE: "hub",
+      HUB_PG_USER: "hub_user",
+      HUB_PG_SSLMODE: "verify-full",
+      HUB_PG_PASSWORD: "synthetic-profile-password",
+      HUB_CREDENTIAL_KEY: credential,
+      HUB_CREDENTIAL_KEY_ID: "primary",
+    },
+    revision: initial.result.revision,
+  });
+  assert.equal(saved.status, 200);
+  assert.equal(saved.result.restartRequired, true);
+  const settings = await admin.request("/api/config");
+  const encoded = JSON.stringify(settings.result);
+  assert.ok(!encoded.includes("synthetic-profile-password"));
+  assert.ok(!encoded.includes(credential));
+  assert.equal(
+    settings.result.infrastructureProfile.find(
+      (item) => item.name === "HUB_PG_HOST",
+    ).reference,
+    "DATABASE_HOST",
+  );
+  assert.equal(
+    settings.result.infrastructureProfile.find(
+      (item) => item.name === "HUB_PG_PASSWORD",
+    ).configured,
+    true,
+  );
+  const persisted = await readFile(path.join(f.directory, "state.json"), "utf8");
+  assert.ok(!persisted.includes("synthetic-profile-password"));
+  assert.ok(!persisted.includes(credential));
+
+  const denied = await admin.request("/api/config/infrastructure/secrets", {
+    password: "wrong-password-value",
+  });
+  assert.equal(denied.status, 400);
+  assert.equal(denied.result.error, "LOGIN_FAILED");
+  const revealed = await admin.request("/api/config/infrastructure/secrets", {
+    password,
+  });
+  assert.equal(revealed.status, 200);
+  assert.equal(
+    revealed.result.secrets.HUB_PG_PASSWORD,
+    "synthetic-profile-password",
+  );
+  assert.equal(revealed.result.secrets.HUB_CREDENTIAL_KEY, credential);
+
+  const removed = await admin.request("/api/config/infrastructure", {
+    infrastructure: { HUB_PG_PASSWORD: null },
+    revision: settings.result.revision,
+  });
+  assert.equal(removed.status, 200);
+  assert.equal(
+    Object.hasOwn(f.control.data.infrastructure, "HUB_PG_PASSWORD"),
+    false,
+  );
+});
 
 test("password-change environment policy is strict and defaults to required", () => {
   const env = {
@@ -506,6 +690,18 @@ test("HTTP console: unauthenticated/CSRF/Host denial, mandatory change, secrets,
   assert.equal(theme.status, 200);
   assert.match(theme.headers.get("Content-Type"), /text\/javascript/);
   assert.match(theme.result, /devtunnel-toolkit-theme/);
+  for (const asset of [
+    "/brand/mark-light.svg",
+    "/brand/mark-dark.svg",
+    "/brand/mark-contrast.svg",
+    "/brand/favicon.svg",
+    "/favicon.ico",
+  ]) {
+    const response = await admin.request(asset);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("Content-Type"), /image\/svg\+xml/);
+    assert.match(response.result, /<title>DevTunnel Toolkit<\/title>/);
+  }
   assert.equal(
     (
       await admin.request(

@@ -7,6 +7,10 @@ import {
 import { check, HubError, type Config } from "../model.js";
 import { credentialKeys, seal, unseal } from "../credentials.js";
 import type { StateStore } from "../state.js";
+import {
+  updateInfrastructureProfile,
+  type InfrastructureProfile,
+} from "../environment.js";
 
 export type Role = "admin" | "operator" | "viewer";
 export interface User {
@@ -48,6 +52,8 @@ export interface ControlData {
   users: User[];
   providers: AuthProvider[];
   policy?: Partial<Config>;
+  infrastructure?: InfrastructureProfile;
+  setupCompletedAt?: string;
 }
 export const roles: Role[] = ["admin", "operator", "viewer"];
 export const usernameValid = (v: unknown): v is string =>
@@ -254,6 +260,12 @@ export class ControlStore {
         ),
         "RECOVERY_ADMIN_MISSING",
       );
+      if (this.data.infrastructure) {
+        this.data.infrastructure = updateInfrastructureProfile(
+          {},
+          this.data.infrastructure,
+        );
+      }
     } else {
       this.data = {
         version: 1,
@@ -277,6 +289,10 @@ export class ControlStore {
       };
       await this.update(() => {});
     }
+  }
+  setupRequired(): boolean {
+    const admin = this.data.users.find((u) => u.id === "admin");
+    return !this.data.setupCompletedAt && !admin?.password;
   }
   update(
     edit: (draft: ControlData) => void | Promise<void>,

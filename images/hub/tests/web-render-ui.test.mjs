@@ -91,7 +91,7 @@ function fixture() {
     overview = {hubId:'testhub',ready:true,proxyPort:3140,socksEnabled:true,socksPort:3180,providers:['github','microsoft'],jobs:[],sessions:[
       {id:'session-one',provider:'github',status:'running',proxy_port:3140,listener:18001,socks_port:3180,socks_listener:18002,tunnel_id:'testhub-one.test',created_at:'2026-01-01T00:00:00Z',identity:{user_id:'subject-one',user_login:'tester'}},
       {id:'session-two',provider:'microsoft',status:'login_required',proxy_port:3140,listener:18003,created_at:'2026-01-01T00:00:00Z'}]};
-    catalog = {users:{revision:1,users:[]},providers:{revision:1,callback:'https://hub.example.com/auth/callback',providers:[]},settings:{revision:1,config:{hubId:'testhub',proxyPort:3140,socksPort:3180,socksEnabled:true,allowAllDomains:false,allowedDomains:[],allowedPorts:[80,443],connectPorts:[443],allowedProviders:['github','microsoft'],allowedMicrosoftTenants:[],tunnelNameTemplate:'{hub_id}-{username}',maxSessions:50,maintenanceSeconds:300,listenerStart:18001,listenerEnd:18999,healthPort:8080}}};
+    catalog = {users:{revision:1,users:[]},providers:{revision:1,callback:'https://hub.example.com/auth/callback',providers:[]},settings:{revision:1,config:{hubId:'testhub',proxyPort:3140,socksPort:3180,socksEnabled:true,allowAllDomains:false,allowedDomains:[],allowedPorts:[80,443],connectPorts:[443],allowedProviders:['github','microsoft'],allowedMicrosoftTenants:[],tunnelNameTemplate:'{hub_id}-{username}',maxSessions:50,maintenanceSeconds:300,listenerStart:18001,listenerEnd:18999,healthPort:8080},infrastructure:[{name:'HUB_ID',sensitive:false,configured:true,source:'environment',value:'testhub',restartRequired:true},{name:'HUB_PG_PASSWORD',sensitive:true,configured:true,source:'environment-reference',reference:'DATABASE_PASSWORD',restartRequired:true}],infrastructureProfile:[{name:'HUB_ID',sensitive:false,configured:true,value:'next-hub'},{name:'HUB_PG_PASSWORD',sensitive:true,configured:true}]}};
     dialog.querySelector = (selector) => selector === '[data-wait-job]' ? null : document.querySelector('#dialog '+selector);`);
   return { run, element, document, events, requests, context };
 }
@@ -194,6 +194,35 @@ test("views render users, providers, logs, settings and authorization without le
     ),
     /HIDDEN/,
   );
+});
+
+test("infrastructure settings render aligned effective and desired values with editable controls", () => {
+  const f = fixture();
+  f.run('view="settings";renderView();');
+  const settings = f.element("#workspace").innerHTML;
+  assert.match(settings, /Configuração/);
+  assert.match(settings, /Identificador do Hub/);
+  assert.match(settings, /HUB_ID/);
+  assert.match(settings, /Senha do PostgreSQL/);
+  assert.match(settings, /HUB_PG_PASSWORD/);
+  assert.match(settings, /Valor efetivo/);
+  assert.match(settings, /Valor desejado/);
+  assert.match(settings, /next-hub/);
+  assert.match(settings, /data-infrastructure/);
+  assert.match(settings, /data-infrastructure-secrets/);
+  assert.doesNotMatch(settings, /synthetic-secret/);
+  f.run("infrastructureForm();");
+  const form = f.element("#dialog").innerHTML;
+  assert.match(form, /name="HUB_RUN_DIR"/);
+  assert.match(form, /name="HUB_STORAGE_BACKEND"/);
+  assert.match(form, /name="HUB_PG_PASSWORD"/);
+  assert.match(form, /Diretório de execução/);
+  assert.match(form, /Backend de armazenamento/);
+  assert.match(form, /Banco de dados PostgreSQL/);
+  assert.match(form, /Modo TLS do PostgreSQL/);
+  assert.match(form, /Chave de criptografia das credenciais/);
+  assert.match(form, /value="next-hub"/);
+  assert.doesNotMatch(form, /synthetic-secret/);
 });
 
 test("LDAP and OAuth forms retain immutable identity fields and write-only secrets", () => {
@@ -332,28 +361,55 @@ test("click dispatch ignores unrelated buttons and keeps structured actions and 
   assert.equal(f.run("view"), "sessions");
 });
 
-test("logo foreground/background meet contrast and CSS no longer duplicates button selector", async () => {
+test("brand assets support light, dark and high-contrast modes without the legacy tile", async () => {
   const css = await readFile(
     new URL("../web/app.css", import.meta.url),
     "utf8",
   );
-  const background = css.match(
-    /\.brand-mark\s*\{[^}]*background:\s*(#[a-f0-9]{6})/i,
-  )[1];
-  const linear = (value) =>
-    value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  const channels = background
-    .slice(1)
-    .match(/../g)
-    .map((value) => linear(Number.parseInt(value, 16) / 255));
-  const luminance =
-    channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
-  assert.ok(1.05 / (luminance + 0.05) >= 4.5);
+  const app = await readFile(new URL("../web/app.js", import.meta.url), "utf8");
+  for (const asset of ["mark-light.svg", "mark-dark.svg", "mark-contrast.svg"])
+    assert.match(app, new RegExp(`/brand/${asset.replace(".", String.raw`\.`)}`));
+  assert.doesNotMatch(css, /\.brand-mark\s*\{[^}]*background:/s);
+  assert.match(css, /@media \(forced-colors: active\)/);
+  assert.match(css, /:root\[data-theme="dark"\] \.brand-logo-dark/);
+  for (const token of [
+    "--accent: #1473e6",
+    "--flow: #20c7d4",
+    "--nav-indicator: #20c7d4",
+    "--login-glow: #ddebff",
+    "--flow: #4cc9f0",
+    "--login-glow: #102f4a",
+  ])
+    assert.match(css, new RegExp(token));
+  const luminance = (hex) => {
+    const linear = (value) =>
+      value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    const channels = hex
+      .slice(1)
+      .match(/../g)
+      .map((value) => linear(Number.parseInt(value, 16) / 255));
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  const contrast = (foreground, background) => {
+    const values = [luminance(foreground), luminance(background)].sort(
+      (a, b) => b - a,
+    );
+    return (values[0] + 0.05) / (values[1] + 0.05);
+  };
+  assert.ok(contrast("#ffffff", "#1473e6") >= 4.5);
+  assert.ok(contrast("#102b32", "#42d3ba") >= 4.5);
   assert.equal([...css.matchAll(/^button\s*\{/gm)].length, 1);
+  assert.doesNotMatch(
+    css,
+    /\.infrastructure-table td:nth-child\(3\)\s*\{[^}]*display:\s*flex/s,
+  );
+  assert.match(css, /\.infrastructure-value\s*\{[^}]*display:\s*inline-flex/s);
+  assert.match(css, /\.infrastructure-name\s*\{[^}]*display:\s*grid/s);
   const html = await readFile(
     new URL("../web/index.html", import.meta.url),
     "utf8",
   );
   assert.match(html, /<output id="toast" aria-live="polite"><\/output>/);
   assert.match(html, /<script src="\/app.js" type="module"><\/script>/);
+  assert.match(html, /<link rel="icon" href="\/brand\/favicon\.svg"/);
 });

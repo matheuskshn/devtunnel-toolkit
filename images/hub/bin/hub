@@ -2,10 +2,23 @@
 set -eu
 umask 077
 if [ "${1:-}" = serve ]; then
-  hub_data_dir="${HUB_DATA_DIR:-/data}"
-  hub_run_dir="${HUB_RUN_DIR:-/run/hub}"
+  resolve_hub_value() {
+    case "$1" in
+      env://*)
+        hub_ref="${1#env://}"
+        case "$hub_ref" in
+          ''|[0-9]*|*[!A-Za-z0-9_]*) echo INVALID_ENV_REFERENCE >&2; exit 1 ;;
+        esac
+        printenv "$hub_ref" || { echo ENV_REFERENCE_REQUIRED >&2; exit 1; }
+        ;;
+      *) printf '%s' "$1" ;;
+    esac
+  }
+  hub_data_dir="$(resolve_hub_value "${HUB_DATA_DIR:-/data}")"
+  hub_run_dir="$(resolve_hub_value "${HUB_RUN_DIR:-/run/hub}")"
+  hub_storage_backend="$(resolve_hub_value "${HUB_STORAGE_BACKEND:-filesystem}")"
   mkdir -p "$hub_run_dir"
-  if [ "${HUB_STORAGE_BACKEND:-filesystem}" = postgres ]; then
+  if [ "$hub_storage_backend" = postgres ]; then
     hub_data_dir="$hub_run_dir"
   fi
   mkdir -p "$hub_data_dir"

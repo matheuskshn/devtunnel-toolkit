@@ -5,6 +5,13 @@ import { parseEnv } from 'node:util';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../dist/config.js';
+import {
+  infrastructureSecrets,
+  infrastructureFields,
+  publicInfrastructureProfile,
+  resolveRuntimeEnvironment,
+  updateInfrastructureProfile,
+} from '../dist/environment.js';
 
 async function fixture(t, content = '{}') {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'hub-config-'));
@@ -73,4 +80,101 @@ test('explicit missing paths and malformed files fail even with environment over
   await assert.rejects(loadConfig(file,{}), /UNKNOWN_CONFIG_KEY/);
   await writeFile(file,'{"maxSessions":0}');
   await assert.rejects(loadConfig(file,{HUB_MAX_SESSIONS:'10'}), /INVALID_SESSION_LIMIT/);
+});
+test('managed settings resolve explicit environment references without exposing secrets', () => {
+  const raw = {
+    HUB_ID: 'env://DEPLOYMENT_HUB_ID',
+    DEPLOYMENT_HUB_ID: 'test-hub',
+    HUB_PG_PASSWORD: 'env://DATABASE_SECRET',
+    DATABASE_SECRET: 'synthetic-password-not-for-output',
+    HUB_CREDENTIAL_KEY: 'env://CREDENTIAL_SECRET',
+    CREDENTIAL_SECRET: Buffer.alloc(32, 7).toString('base64'),
+  };
+  const resolved = resolveRuntimeEnvironment(raw);
+  assert.equal(resolved.HUB_ID, 'test-hub');
+  assert.equal(resolved.HUB_PG_PASSWORD, raw.DATABASE_SECRET);
+  const fields = infrastructureFields(raw, resolved, {
+    HUB_STORAGE_BACKEND: 'postgres',
+  });
+  const output = JSON.stringify(fields);
+  assert.ok(!output.includes(raw.DATABASE_SECRET));
+  assert.ok(!output.includes(raw.CREDENTIAL_SECRET));
+  assert.equal(
+    fields.find((field) => field.name === 'HUB_PG_PASSWORD').reference,
+    'DATABASE_SECRET',
+  );
+  assert.equal(
+    fields.find((field) => field.name === 'HUB_PG_PASSWORD').configured,
+    true,
+  );
+});
+test('managed environment references fail closed for missing, recursive or malformed values', () => {
+  assert.throws(
+    () => resolveRuntimeEnvironment({ HUB_PG_PASSWORD: 'env://MISSING' }),
+    { code: 'ENV_REFERENCE_REQUIRED' },
+  );
+  assert.throws(
+    () => resolveRuntimeEnvironment({ HUB_ID: 'env://HUB_ID' }),
+    { code: 'INVALID_ENV_REFERENCE' },
+  );
+  assert.throws(
+    () => resolveRuntimeEnvironment({ HUB_ID: 'env://BAD-NAME' }),
+    { code: 'INVALID_ENV_REFERENCE' },
+  );
+  assert.throws(
+    () =>
+      resolveRuntimeEnvironment({
+        HUB_ID: 'env://FIRST',
+        FIRST: 'env://SECOND',
+        SECOND: 'test-hub',
+      }),
+    { code: 'ENV_REFERENCE_REQUIRED' },
+  );
+});
+test('editable infrastructure profiles validate fields and redact saved secrets', () => {
+  const credential = Buffer.alloc(32, 9).toString('base64');
+  const profile = updateInfrastructureProfile({}, {
+    HUB_RUN_DIR: '/run/custom-hub',
+    HUB_ID: 'custom-hub',
+    HUB_STORAGE_BACKEND: 'postgres',
+    HUB_PG_HOST: 'env://DATABASE_HOST',
+    HUB_PG_PORT: '5432',
+    HUB_PG_DATABASE: 'hub',
+    HUB_PG_USER: 'hub_user',
+    HUB_PG_SSLMODE: 'verify-full',
+    HUB_PG_PASSWORD: 'synthetic-saved-password',
+    HUB_CREDENTIAL_KEY: credential,
+    HUB_CREDENTIAL_KEY_ID: 'primary',
+  });
+  const publicProfile = publicInfrastructureProfile(profile);
+  assert.equal(
+    publicProfile.find((item) => item.name === 'HUB_PG_HOST').reference,
+    'DATABASE_HOST',
+  );
+  assert.equal(
+    publicProfile.find((item) => item.name === 'HUB_PG_PASSWORD').configured,
+    true,
+  );
+  assert.ok(!JSON.stringify(publicProfile).includes('synthetic-saved-password'));
+  assert.ok(!JSON.stringify(publicProfile).includes(credential));
+  assert.equal(
+    infrastructureSecrets(profile).HUB_PG_PASSWORD,
+    'synthetic-saved-password',
+  );
+  const updated = updateInfrastructureProfile(profile, {
+    HUB_PG_PASSWORD: null,
+    HUB_ID: 'next-hub',
+  });
+  assert.equal(updated.HUB_ID, 'next-hub');
+  assert.equal(Object.hasOwn(updated, 'HUB_PG_PASSWORD'), false);
+  for (const invalid of [
+    { UNKNOWN: 'value' },
+    { HUB_ID: 'INVALID ID' },
+    { HUB_RUN_DIR: '../relative' },
+    { HUB_PG_PORT: '70000' },
+    { HUB_PG_SSLMODE: 'require' },
+    { HUB_CREDENTIAL_KEY: 'short' },
+    { HUB_PG_HOST: 'line\nbreak' },
+    { HUB_ID: 'env://BAD-NAME' },
+  ]) assert.throws(() => updateInfrastructureProfile({}, invalid));
 });

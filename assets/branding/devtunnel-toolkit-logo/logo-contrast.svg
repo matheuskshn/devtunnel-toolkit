@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 256" role="img">
+  <title>DevTunnel Toolkit</title>
+  <path fill="#000" d="M43 166v-61c0-48 34-81 79-84l4 39c-27 1-45 19-45 46v60zM134 21c46 3 79 38 79 84v61h-38v-60c0-25-17-44-44-46zM115 173H49l15-15-13-13-38 38 38 38 13-13-15-15h66zm26 0h66l-15-15 13-13 38 38-38 38-13-13 15-15h-66zM170 119h14l4 11 10 4 10-5 10 10-5 10 4 10 11 4v14l-11 4-4 10 5 10-10 10-10-5-10 4-4 11h-14l-4-11-10-4-10 5-10-10 5-10-4-10-11-4v-14l11-4 4-10-5-10 10-10 10 5 10-4z"/>
+  <path fill="#FFF" d="M145 198l29-29c-4-8-2-18 5-25 7-7 17-8 25-4l-13 13 3 9 9 3 13-13c4 8 3 18-4 25-7 7-17 9-25 5l-29 29z"/>
+  <text x="274" y="145" fill="#000" font-family="'Helvetica Neue', Arial, sans-serif" font-size="58" font-weight="700" letter-spacing="-2">DevTunnel Toolkit</text>
+</svg>

@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/branding/devtunnel-toolkit-logo/logo-dark.svg">
+    <img src="assets/branding/devtunnel-toolkit-logo/logo.svg" alt="DevTunnel Toolkit" width="680">
+  </picture>
+</p>
+
 # DevTunnel Toolkit
 
 ## Local container health

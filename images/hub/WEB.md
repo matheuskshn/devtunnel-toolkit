@@ -40,6 +40,51 @@ The example publishes **only** `127.0.0.1:8082`. Open `http://localhost:8082`.
 HTTP origins are accepted only for loopback development. Do not publish the
 loopback-development configuration to a shared network.
 
+### Assisted first start
+
+A new state with no recovery-administrator password opens the protected setup
+screen instead of the normal login. Generate a one-use code from the private
+container CLI while the manager is running:
+
+```bash
+docker compose -f images/hub/examples/compose/compose.web.yml exec hub \
+  hub setup token
+```
+
+The code expires after 10 minutes, is never written to application logs and is
+invalidated after one successful browser unlock or when a replacement code is
+issued. The browser setup session expires after 15 minutes and has its own
+HttpOnly cookie and CSRF token. Host and Origin checks, authentication rate
+limits, body limits and the normal security headers remain active.
+
+The wizard shows the effective infrastructure sources, lets the administrator
+prepare an editable deployment profile, validates the tunnel policy and creates
+the `admin` password. The profile is stored inside the already encrypted console
+state, in either filesystem or PostgreSQL persistence. Its password and key
+values are redacted from normal responses. Completion creates a normal
+authenticated session and permanently disables first-run setup for that state.
+Check status without revealing a token with `hub setup status`.
+
+ACA, Kubernetes and Docker cannot have their parent environment changed by the
+running process. The profile therefore records the desired values and highlights
+them as pending for the next deployment/restart; the administrator must still
+apply them using platform variables or secret references. Supported bootstrap
+values can point to another variable with `env://VARIABLE_NAME`; the target must
+exist in the replacement container. This keeps the image portable and avoids
+granting it cloud-administration access.
+
+After setup, administrators can update the profile under **Configurações >
+Infraestrutura do container > Editar infraestrutura**. Literal
+`HUB_PG_PASSWORD` and `HUB_CREDENTIAL_KEY` values are encrypted at rest and are
+never returned by the normal configuration endpoint. **Ver segredos salvos**
+requires the recovery administrator's local password, is rate-limited and emits
+an audit event. It can reveal only values stored in this profile, not secrets
+owned by the executor environment. Prefer `env://VARIABLE_NAME` and the native
+secret mechanism of ACA, Kubernetes or Docker whenever possible.
+
+The existing `hub admin reset-password` command remains the recovery path and
+also provides a non-wizard bootstrap option for automated deployments.
+
 ### Recovery administrator
 
 There is no default password. The local account `admin` is reserved for recovery
@@ -235,10 +280,13 @@ captured for existing sessions do not change.
 
 Saved web policy overrides matching environment/JSON values while the console
 is enabled. Fields that were never saved still follow environment > JSON >
-defaults. Hub ID, listener pool, health port, web origin/key, storage backend and
-database credentials remain executor settings, shown as deployment-level
-configuration rather than unsafe in-process changes. Disabling the web console
-returns operating policy to environment/JSON; review it before restarting.
+defaults. The editable infrastructure profile is different: it records a target
+executor configuration and does not override the running process. Hub ID,
+storage backend, database location and credential-key changes can also require
+state or credential migration and must not be applied blindly to an existing
+deployment. Listener pool, health port and web origin/key remain direct executor
+settings outside this profile. Disabling the web console returns operating
+policy to environment/JSON; review it before restarting.
 
 The complete control-plane document is AES-256-GCM encrypted under `HUB_WEB_KEY`
 inside the existing state snapshot. Both storage backends persist it atomically
