@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-rc.6](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.5...v0.1.0-rc.6) (2026-09-16)
+
+
+### Features
+
+* **hub:** add assisted setup and infrastructure management ([#23](https://github.com/matheuskshn/devtunnel-toolkit/issues/23)) ([3a88e4a](https://github.com/matheuskshn/devtunnel-toolkit/commit/3a88e4a00a3c535dffb0e3df92ad568e81129756))
+
 ## [0.1.0-rc.5](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.4...v0.1.0-rc.5) (2026-09-12)
 
 
