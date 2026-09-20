@@ -89,9 +89,9 @@ function fixture() {
   const run = (code) => vm.runInContext(code, context);
   run(`me = {id:'admin',name:'Administrator',role:'admin',local:true,mustChange:false};
     overview = {hubId:'testhub',ready:true,proxyPort:3140,socksEnabled:true,socksPort:3180,providers:['github','microsoft'],jobs:[],sessions:[
-      {id:'session-one',provider:'github',status:'running',proxy_port:3140,listener:18001,socks_port:3180,socks_listener:18002,tunnel_id:'testhub-one.test',created_at:'2026-01-01T00:00:00Z',identity:{user_id:'subject-one',user_login:'tester'}},
+      {id:'session-one',provider:'github',status:'running',proxy_port:3140,listener:18001,socks_port:3180,socks_listener:18002,tunnel_id:'testhub-one.test',created_at:'2026-01-01T00:00:00Z',tunnel_expiration_hours:48,auth_expected_hours:720,auth_warning_hours:2,authenticated_at:'2026-01-01T00:00:00Z',auth_expected_reauth_at:'2099-01-31T00:00:00Z',host_token_expires_at:'2099-01-02T00:00:00Z',tunnel_expires_at:'2099-01-03T00:00:00Z',identity:{user_id:'subject-one',user_login:'tester'}},
       {id:'session-two',provider:'microsoft',status:'login_required',proxy_port:3140,listener:18003,created_at:'2026-01-01T00:00:00Z'}]};
-    catalog = {users:{revision:1,users:[]},providers:{revision:1,callback:'https://hub.example.com/auth/callback',providers:[]},settings:{revision:1,config:{hubId:'testhub',proxyPort:3140,socksPort:3180,socksEnabled:true,allowAllDomains:false,allowedDomains:[],allowedPorts:[80,443],connectPorts:[443],allowedProviders:['github','microsoft'],allowedMicrosoftTenants:[],tunnelNameTemplate:'{hub_id}-{username}',maxSessions:50,maintenanceSeconds:300,listenerStart:18001,listenerEnd:18999,healthPort:8080},infrastructure:[{name:'HUB_ID',sensitive:false,configured:true,source:'environment',value:'testhub',restartRequired:true},{name:'HUB_PG_PASSWORD',sensitive:true,configured:true,source:'environment-reference',reference:'DATABASE_PASSWORD',restartRequired:true}],infrastructureProfile:[{name:'HUB_ID',sensitive:false,configured:true,value:'next-hub'},{name:'HUB_PG_PASSWORD',sensitive:true,configured:true}]}};
+    catalog = {users:{revision:1,users:[]},providers:{revision:1,callback:'https://hub.example.com/auth/callback',providers:[]},settings:{revision:1,config:{hubId:'testhub',proxyPort:3140,socksPort:3180,socksEnabled:true,allowAllDomains:false,allowedDomains:[],allowedPorts:[80,443],connectPorts:[443],allowedProviders:['github','microsoft'],allowedMicrosoftTenants:[],tunnelNameTemplate:'{hub_id}-{username}',maxSessions:50,maintenanceSeconds:300,listenerStart:18001,listenerEnd:18999,healthPort:8080,defaultTunnelExpirationHours:48,minTunnelExpirationHours:1,maxTunnelExpirationHours:720,microsoftExpectedAuthHours:24,githubExpectedAuthHours:720,authWarningHours:2,authCheckSeconds:900},infrastructure:[{name:'HUB_ID',sensitive:false,configured:true,source:'environment',value:'testhub',restartRequired:true},{name:'HUB_PG_PASSWORD',sensitive:true,configured:true,source:'environment-reference',reference:'DATABASE_PASSWORD',restartRequired:true}],infrastructureProfile:[{name:'HUB_ID',sensitive:false,configured:true,value:'next-hub'},{name:'HUB_PG_PASSWORD',sensitive:true,configured:true}]}};
     dialog.querySelector = (selector) => selector === '[data-wait-job]' ? null : document.querySelector('#dialog '+selector);`);
   return { run, element, document, events, requests, context };
 }
@@ -135,17 +135,19 @@ test("session renderers preserve state labels, filters, mapping and role-specifi
   assert.match(f.element("#workspace").innerHTML, /SOCKS5 TCP/);
   assert.match(f.element("#session-table").innerHTML, /HTTP 3140 → 18001/);
   assert.match(f.element("#session-table").innerHTML, /SOCKS 3180 → 18002/);
+  assert.match(f.element("#session-table").innerHTML, /testhub-one\.test/);
+  assert.doesNotMatch(f.element("#session-table").innerHTML, />session-one</);
   assert.match(f.element("#session-table").innerHTML, /data-action="stop"/);
-  assert.match(f.element("#session-table").innerHTML, /data-action="login"/);
+  assert.match(f.element("#session-table").innerHTML, /data-action="connect"/);
   f.run('me.role="viewer"; renderSessions();');
   assert.doesNotMatch(f.element("#session-table").innerHTML, /data-action=/);
   assert.match(f.element("#session-table").innerHTML, /data-detail=/);
   f.run('filter="session-one"; renderSessions();');
-  assert.match(f.element("#session-table").innerHTML, /1 de 2 sessões/);
+  assert.match(f.element("#session-table").innerHTML, /1 de 2 túneis/);
   f.run('statusFilter="stopped"; renderSessions();');
   assert.match(f.element("#session-table").innerHTML, /Nenhum resultado/);
   f.run('filter="";statusFilter="";overview.sessions=[];renderSessions();');
-  assert.match(f.element("#session-table").innerHTML, /Nenhuma sessão ainda/);
+  assert.match(f.element("#session-table").innerHTML, /Nenhum túnel ainda/);
   f.run("overview.socksEnabled=false;");
   assert.match(
     f.run("socksMapping({socks_port:3180,socks_listener:18002})"),
@@ -176,6 +178,11 @@ test("views render users, providers, logs, settings and authorization without le
     );
   }
   assert.match(f.run('detailActions("session-one")'), /data-action="stop"/);
+  assert.match(
+    f.run('detailActions("session-one")'),
+    /data-action="reconnect"/,
+  );
+  assert.match(f.run('detailActions("session-one")'), /Ações avançadas/);
   assert.doesNotMatch(
     f.run('detailActions("session-one")'),
     /data-action="remove"/,
@@ -283,15 +290,27 @@ test("modal workflows preserve controls, action confirmation and owner-only devi
   const f = fixture();
   f.run('detail("session-one");');
   assert.match(f.element("#dialog").innerHTML, /SOCKS5 atual/);
+  assert.match(f.element("#dialog").innerHTML, /Reautenticação esperada/);
+  assert.match(f.element("#dialog").innerHTML, /Token de host expira/);
+  assert.match(f.element("#dialog").innerHTML, /Recurso remoto expira/);
+  assert.match(f.element("#dialog").innerHTML, /Janela confirmada pelo serviço/);
+  assert.match(f.element("#dialog").innerHTML, /estimativa/);
+  assert.match(f.element("#dialog").innerHTML, /exato/);
   assert.match(f.element("#dialog").innerHTML, /data-action="remove"/);
   assert.equal(f.element("#dialog").open, true);
   assert.equal(f.element("#dialog").scrollTop, 0);
   f.run('confirmAction("remove","session-one");');
-  assert.match(f.element("#dialog").innerHTML, /marcada como removida/);
+  assert.match(f.element("#dialog").innerHTML, /marcado como removido/);
   f.run('confirmAction("logout","session-one");');
   assert.match(f.element("#dialog").innerHTML, /credenciais do túnel/);
   f.run("newSession();");
   assert.match(f.element("#dialog").innerHTML, /SOCKS5 TCP: 3180/);
+  assert.doesNotMatch(f.element("#dialog").innerHTML, /name="id"/);
+  assert.match(f.element("#dialog").innerHTML, /gerado automaticamente/);
+  assert.match(f.element("#dialog").innerHTML, /Expiração por inatividade/);
+  assert.match(f.element("#dialog").innerHTML, /Validade esperada do login/);
+  f.run('me.role="admin";validityForm("session-one");');
+  assert.match(f.element("#dialog").innerHTML, /Configurar validade/);
   f.run("policyForm();");
   assert.match(f.element("#dialog").innerHTML, /Porta do proxy/);
   assert.match(

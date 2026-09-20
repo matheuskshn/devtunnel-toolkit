@@ -52,14 +52,23 @@ Run these through container exec as a trusted administrator:
 
 ```sh
 hub session add user-a --provider microsoft
-hub session login user-a
-hub session start user-a
+hub session configure user-a --expiration-hours 72 --expected-auth-hours 24 --auth-warning-hours 2
+hub session connect user-a
 hub session status user-a
 hub session list
 hub session stop user-a
+hub session reconnect user-a
 hub session logout user-a
 hub session remove user-a
 ```
+
+O ID local é opcional em `hub session add`; quando omitido, o Hub gera um ID
+opaco. `connect` valida ou solicita o login e inicia o túnel em uma única ação.
+`reconnect` para o relay, limpa o login armazenado, exige nova autenticação da
+mesma identidade e inicia o túnel novamente. As ações individuais `login` e
+`start` continuam disponíveis para diagnóstico e automação avançada.
+`configure` altera a janela deslizante de inatividade do recurso e as estimativas
+de validade/aviso do login. O serviço continua sendo a fonte da expiração real.
 
 - `add` reserves a session ID, listener and naming template locally. Without
   `--tunnel-name`, the name stays unresolved until verified login.
@@ -230,6 +239,13 @@ administrator explicitly enables `HUB_ALLOW_ALL_DOMAINS=true`.
 | `allowedMicrosoftTenants`       | `[]`                     | Optional tenant-ID allowlist; empty permits any Microsoft tenant       |
 | `healthPort`                    | `8080`                   | Liveness/readiness only; no identity or admin information              |
 | `maintenanceSeconds`            | `300`                    | Remote policy/credential recheck interval                              |
+| `defaultTunnelExpirationHours`  | `48`                     | Default sliding inactivity window for remote resources                 |
+| `minTunnelExpirationHours`      | `1`                      | Minimum per-session remote-resource window                             |
+| `maxTunnelExpirationHours`      | `720`                    | Maximum per-session remote-resource window                             |
+| `microsoftExpectedAuthHours`    | `24`                     | Estimated Microsoft interactive-login window                           |
+| `githubExpectedAuthHours`       | `720`                    | Estimated GitHub interactive-login window                              |
+| `authWarningHours`              | `2`                      | Default warning lead time for estimated reauthentication               |
+| `authCheckSeconds`              | `900`                    | Active-session identity verification interval                          |
 
 | Environment variable                      | JSON key                                     |
 | ----------------------------------------- | -------------------------------------------- |
@@ -247,6 +263,13 @@ administrator explicitly enables `HUB_ALLOW_ALL_DOMAINS=true`.
 | `HUB_ALLOWED_MICROSOFT_TENANTS`           | `allowedMicrosoftTenants`                    |
 | `HUB_HEALTH_PORT`                         | `healthPort`                                 |
 | `HUB_MAINTENANCE_SECONDS`                 | `maintenanceSeconds`                         |
+| `HUB_DEFAULT_TUNNEL_EXPIRATION_HOURS`     | `defaultTunnelExpirationHours`               |
+| `HUB_MIN_TUNNEL_EXPIRATION_HOURS`         | `minTunnelExpirationHours`                   |
+| `HUB_MAX_TUNNEL_EXPIRATION_HOURS`         | `maxTunnelExpirationHours`                   |
+| `HUB_MICROSOFT_EXPECTED_AUTH_HOURS`       | `microsoftExpectedAuthHours`                 |
+| `HUB_GITHUB_EXPECTED_AUTH_HOURS`          | `githubExpectedAuthHours`                    |
+| `HUB_AUTH_WARNING_HOURS`                  | `authWarningHours`                           |
+| `HUB_AUTH_CHECK_SECONDS`                  | `authCheckSeconds`                           |
 
 Lists use comma-separated values, with whitespace around items ignored, not JSON
 arrays. An unset variable preserves the file value or default; an empty variable
@@ -466,11 +489,15 @@ identity mismatches need intervention. SIGTERM stops workers and session service
 and saves state; configure at least 30 seconds of termination grace.
 
 The SDK asks the manager for fresh host credentials over private process IPC.
-Credential rechecks also inspect remote ACLs and ports. Every 12 hours of active
-operation, the manager requests a two-day tunnel-resource expiration. This is
-separate from login/token renewal, and the service may apply its own limit.
-No particular 24-hour or 30-day login lifetime is promised. Revocation, MFA and
-Conditional Access can require a fresh user login at any time.
+Credential rechecks also inspect remote ACLs and ports. The configured
+per-session resource window is renewed no later than 12 hours or halfway through
+that window, whichever comes first. The UI shows the exact host-token expiration
+parsed by the official SDK and the exact remote-resource expiration returned by
+the service. The interactive-login countdown is explicitly an estimate from the
+last completed device login. Revocation, MFA and Conditional Access can require
+a fresh user login at any time. A CLI `Login token expired` response becomes
+`LOGIN_TOKEN_EXPIRED`, clears only that session's isolated stale cache, and lets
+`connect` request a new device login before starting.
 
 ## ACA and Kubernetes
 

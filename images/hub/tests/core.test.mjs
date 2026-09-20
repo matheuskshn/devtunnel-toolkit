@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdtemp, rm, readFile, symlink, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { parseConfig, bindIdentity } from '../dist/model.js';
+import { parseConfig, bindIdentity, HubError } from '../dist/model.js';
 import { StateStore } from '../dist/state.js';
 import { parseIdentity, parseJson, privateTunnel, canonicalTunnel, SessionRuntime } from '../dist/auth.js';
 import { squidConfig, auditRecord } from '../dist/squid.js';
@@ -62,6 +62,14 @@ test('audit identity must come from CLI and stay bound to the stable provider id
   assert.deepEqual(actualCliSchema,microsoft);
   for (const input of [{status:'Not logged in'}, {provider:'github',username:'alias-only'},
     {provider:'unknown',userId:'1001',username:'user-a'}]) assert.throws(() => parseIdentity(input,'github'));
+  assert.throws(
+    () => parseIdentity({status:'Login token expired'},'microsoft'),
+    /LOGIN_TOKEN_EXPIRED/,
+  );
+  assert.throws(
+    () => parseIdentity({status:'Login token expired.'},'microsoft'),
+    /LOGIN_TOKEN_EXPIRED/,
+  );
   const session = {provider:'github'}; bindIdentity(session,identity);
   assert.throws(() => bindIdentity(session,{...identity,user_id:'github:1002'}), /IDENTITY_CHANGED/);
   bindIdentity(session,{...identity,user_login:'renamed-user-a'});
@@ -72,6 +80,32 @@ test('audit identity must come from CLI and stay bound to the stable provider id
   assert.equal((await runtime.identity()).tenant_id,'tenant-a');
   runtime.cli = async () => JSON.stringify({status:'Logged in',provider:'microsoft',username:'user-a@example.com',objectId:'object-a',tenantId:'tenant-b'});
   await assert.rejects(runtime.identity(),/TENANT_NOT_ALLOWED/);
+});
+test('expired CLI login is cleared before a fresh device login and records observed validity', async () => {
+  const session={id:'user-a',provider:'microsoft',auth_expected_hours:24};
+  const runtime=new SessionRuntime(session,'/data','/run/hub/test',()=>{});
+  const calls=[];let identities=0;
+  runtime.identity=async()=>{
+    if(identities++===0)throw new HubError('LOGIN_TOKEN_EXPIRED');
+    return {provider:'microsoft',user_id:'microsoft:tenant-a:object-a',user_login:'user-a@example.com',tenant_id:'tenant-a'};
+  };
+  runtime.cli=async args=>{calls.push(args);return '';};
+  await runtime.login(()=>{});
+  assert.deepEqual(calls,[['user','logout'],['user','login','--entra','--use-device-code-auth']]);
+  assert.ok(session.authenticated_at);assert.ok(session.auth_expected_reauth_at);
+  assert.equal(Date.parse(session.auth_expected_reauth_at)-Date.parse(session.authenticated_at),24*3600000);
+});
+test('host token expiration is captured without persisting the token itself', async () => {
+  const session={id:'user-a',provider:'github',auth_expected_hours:720,tunnel_id:'devhub-user-a.use1',proxy_port:3140};
+  const runtime=new SessionRuntime(session,'/data','/run/hub/test',()=>{});
+  const expiration=Math.floor(Date.now()/1000)+3600;
+  const token=['e30',Buffer.from(JSON.stringify({exp:expiration,scp:'host'})).toString('base64url'),'signature'].join('.');
+  runtime.identity=async()=>({provider:'github',user_id:'github:1001',user_login:'user-a'});
+  runtime.details=async()=>({tunnelId:'devhub-user-a',clusterId:'use1',ports:[{portNumber:3140}],accessControl:{entries:[]},accessTokens:{host:token}});
+  const result=await runtime.credentials();
+  assert.equal(result.accessTokens.host,token);
+  assert.equal(Math.floor(Date.parse(session.host_token_expires_at)/1000),expiration);
+  assert.equal(JSON.stringify(session).includes(token),false);
 });
 test('private tunnel validation rejects shared ACLs, extra ports and changed canonical ID', () => {
   const tunnel = { tunnelId:'devhub-user-a',clusterId:'use1',ports:[{portNumber:3140}],accessControl:{entries:[]} };
@@ -111,5 +145,6 @@ test('subprocess environment excludes inherited credentials and errors redact co
   await assert.rejects(command(process.execPath,['-e',"console.error('fake-sensitive-value'); process.exit(1)"],cleanEnvironment()), /^Error: COMMAND_FAILED$/);
   await assert.rejects(command(process.execPath,['-e',"console.error('Tunnel not found in use1: devhub-user-a'); process.exit(1)"],cleanEnvironment()), /TUNNEL_NOT_FOUND/);
   await assert.rejects(command(process.execPath,['-e',"console.error('Tunnel service error: Conflict with existing entity. Retry tunnel operation.'); process.exit(1)"],cleanEnvironment()), /TUNNEL_NAME_CONFLICT/);
+  await assert.rejects(command(process.execPath,['-e',"console.error('Login token expired'); process.exit(1)"],cleanEnvironment()), /LOGIN_TOKEN_EXPIRED/);
   await assert.rejects(command(process.execPath,['-e','setInterval(()=>{},1000)'],cleanEnvironment(),{timeout:50}), /TIMEOUT/);
 });

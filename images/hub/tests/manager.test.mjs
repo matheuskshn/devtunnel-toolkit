@@ -30,6 +30,27 @@ test('sessions enroll, stop, logout and remove without reassigning audit identit
   assert.deepEqual(calls,[['user','logout'],['user','logout']]);
   await assert.rejects(m.dispatch(['session','add','user-a'],()=>{}),/RESERVED/);
 });
+test('CLI session creation can generate an opaque internal ID',async t=>{
+  const m=await manager(t);
+  const session=await m.dispatch(['session','add','--provider','github'],()=>{});
+  assert.match(session.id,/^s-[a-f0-9]{30}$/);assert.equal(session.provider,'github');
+});
+test('session validity is configurable at creation and updates the remote inactivity window',async t=>{
+  const m=await manager(t);
+  const s=await m.dispatch(['session','add','user-a','--provider','github','--expiration-hours','72','--expected-auth-hours','48','--auth-warning-hours','4'],()=>{});
+  assert.equal(s.tunnel_expiration_hours,72);assert.equal(s.auth_expected_hours,48);assert.equal(s.auth_warning_hours,4);
+  s.tunnel_name='devhub-user-a';s.tunnel_id='devhub-user-a.use1';
+  const commands=[];
+  m.runtime=async()=>({
+    identity:async()=>({provider:'github',user_id:'github:1001',user_login:'user-a'}),
+    cli:async args=>{commands.push(args);return '{}';},
+    details:async()=>({tunnelId:'devhub-user-a',clusterId:'use1',ports:[],accessControl:{entries:[]}}),
+  });
+  await m.dispatch(['session','configure','user-a','--expiration-hours','96','--expected-auth-hours','72','--auth-warning-hours','6'],()=>{});
+  assert.deepEqual(commands,[['update','devhub-user-a.use1','--expiration','96h','--json']]);
+  assert.equal(s.tunnel_expiration_hours,96);assert.equal(s.auth_expected_hours,72);assert.equal(s.auth_warning_hours,6);
+  await assert.rejects(m.dispatch(['session','configure','user-a','--expiration-hours','721'],()=>{}),/INVALID_TUNNEL_EXPIRATION/);
+});
 test('one pending login does not block another session; duplicate operations are rejected',async t=>{
   const m=await manager(t);await m.dispatch(['session','add','user-a'],()=>{});
   let release;const barrier=new Promise(resolve=>release=resolve);
@@ -39,6 +60,33 @@ test('one pending login does not block another session; duplicate operations are
   assert.equal((await m.dispatch(['session','list'],()=>{})).length,2);
   await assert.rejects(m.dispatch(['session','stop','user-a'],()=>{}),/SESSION_BUSY/);
   release();await pending;
+});
+test('connect authenticates then starts, while reconnect clears the cache before doing both',async t=>{
+  const m=await manager(t);const events=[];
+  await m.dispatch(['session','add','user-a','--provider','github'],()=>{});
+  const s=m.store.get('user-a');
+  const active={login:async()=>{events.push('login');bindIdentity(s,{provider:'github',user_id:'github:1001',user_login:'user-a'});}};
+  m.runtime=async()=>active;
+  m.start=async session=>{events.push('start');session.status='running';session.desired=true;};
+  await m.dispatch(['session','connect','user-a'],()=>{});
+  assert.deepEqual(events,['login','start']);assert.equal(s.status,'running');
+
+  const previous={cli:async args=>events.push(args.join(' ')),close:async()=>events.push('close')};
+  const renewed={login:async()=>{events.push('reauthenticate');bindIdentity(s,{provider:'github',user_id:'github:1001',user_login:'user-a'});}};
+  let calls=0;m.runtime=async()=>calls++===0?previous:renewed;
+  await m.dispatch(['session','reconnect','user-a'],()=>{});
+  assert.deepEqual(events.slice(2),['user logout','close','reauthenticate','start']);
+  assert.equal(s.status,'running');
+});
+test('reconnect continues when an expired cache is already logged out',async t=>{
+  const m=await manager(t);const s=m.store.add('user-a','github');
+  s.identity={provider:'github',user_id:'github:1001',user_login:'user-a'};
+  const previous={cli:async()=>{throw new HubError('AUTH_REQUIRED');},close:async()=>{}};
+  const renewed={login:async()=>bindIdentity(s,{...s.identity})};
+  let calls=0;m.runtime=async()=>calls++===0?previous:renewed;
+  m.start=async session=>{session.status='running';};
+  await m.dispatch(['session','reconnect','user-a'],()=>{});
+  assert.equal(s.status,'running');
 });
 test('expired auth fails only its session and never retries indefinitely',async t=>{
   const m=await manager(t);const a=m.store.add('user-a','github');const b=m.store.add('user-b','github');
@@ -71,7 +119,7 @@ test('only a confirmed missing resource permits recreation with the exact name a
   let attempts=0;const commands=[];
   await m.provision(s,{details:async()=>{if(attempts++===0)throw new HubError('TUNNEL_NOT_FOUND');return details;},
     cli:async args=>{commands.push(args);return JSON.stringify({tunnel:{tunnelId:s.tunnel_id}});}});
-  assert.deepEqual(commands,[['create','devhub-user-a','--expiration','2d','--json']]);
+  assert.deepEqual(commands,[['create','devhub-user-a','--expiration','48h','--json']]);
   for(const code of ['AUTH_REQUIRED','TUNNEL_ACCESS_DENIED','COMMAND_FAILED']) {
     let created=false;
     await assert.rejects(m.provision(s,{details:async()=>{throw new HubError(code);},cli:async()=>{created=true;}}),new RegExp(code));

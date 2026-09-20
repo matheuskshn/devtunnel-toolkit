@@ -1,3 +1,5 @@
+import {randomBytes} from 'node:crypto';
+
 export type Provider = 'microsoft' | 'github';
 export const DEFAULT_PROXY_PORT = 3140;
 export const DEFAULT_SOCKS_PORT = 3180;
@@ -6,6 +8,13 @@ export interface Identity { provider: Provider; user_id: string; user_login: str
 export interface Session {
   id: string; provider: Provider; tunnel_name?: string; tunnel_id?: string;
   tunnel_name_template?: string;
+  tunnel_expiration_hours?: number;
+  auth_expected_hours?: number; auth_warning_hours?: number;
+  authenticated_at?: string; auth_last_verified_at?: string;
+  auth_expected_reauth_at?: string;
+  host_token_issued_at?: string; host_token_expires_at?: string;
+  tunnel_expires_at?: string; tunnel_custom_expiration_seconds?: number;
+  tunnel_last_verified_at?: string; tunnel_last_renewed_at?: string;
   proxy_port?: number;
   socks_port?: number; socks_listener?: number;
   listener: number; identity?: Identity; desired: boolean; status: Status;
@@ -17,6 +26,9 @@ export interface Config {
   allowedDomains: string[]; allowAllDomains: boolean; allowedPorts: number[]; connectPorts: number[];
   healthPort: number; proxyPort: number; socksPort: number; socksEnabled: boolean; maintenanceSeconds: number;
   allowedProviders: Provider[]; allowedMicrosoftTenants: string[];
+  defaultTunnelExpirationHours: number; minTunnelExpirationHours: number; maxTunnelExpirationHours: number;
+  microsoftExpectedAuthHours: number; githubExpectedAuthHours: number;
+  authWarningHours: number; authCheckSeconds: number;
 }
 export class HubError extends Error {
   constructor(readonly code: string) { super(code); }
@@ -25,6 +37,8 @@ export function check(condition: unknown, code: string): asserts condition {
   if (!condition) throw new HubError(code);
 }
 export const validId = (s: unknown): s is string => typeof s === 'string' && /^[a-z][a-z0-9-]{1,30}[a-z0-9]$/.test(s);
+export const createSessionId = (): string =>
+  `s-${randomBytes(15).toString('hex')}`;
 export const validTunnelName = (s: unknown): s is string => typeof s === 'string' && /^[a-z][a-z0-9-]{1,47}[a-z0-9]$/.test(s);
 export const validCanonicalId = (s: unknown): s is string => typeof s === 'string' && /^[a-z0-9][a-z0-9-]{1,48}\.[a-z0-9]{3,12}$/.test(s);
 export function validNameTemplate(value: unknown): value is string {
@@ -47,7 +61,10 @@ export function parseConfig(value: unknown): Config {
   const defaults: Config = { hubId: 'devhub', tunnelNameTemplate: '{hub_id}-{username}', listenerStart: 18001, listenerEnd: 18999,
     maxSessions: 50, allowedDomains: [], allowAllDomains: false, allowedPorts: [80, 443], connectPorts: [443],
     healthPort: 8080, proxyPort: DEFAULT_PROXY_PORT, socksPort: DEFAULT_SOCKS_PORT, socksEnabled: false, maintenanceSeconds: 300,
-    allowedProviders: ['microsoft','github'], allowedMicrosoftTenants: [] };
+    allowedProviders: ['microsoft','github'], allowedMicrosoftTenants: [],
+    defaultTunnelExpirationHours: 48, minTunnelExpirationHours: 1, maxTunnelExpirationHours: 720,
+    microsoftExpectedAuthHours: 24, githubExpectedAuthHours: 720,
+    authWarningHours: 2, authCheckSeconds: 900 };
   check(Object.keys(input).every(k => k in defaults), 'UNKNOWN_CONFIG_KEY');
   const c = { ...defaults, ...input } as Config;
   check(validId(c.hubId), 'INVALID_HUB_ID');
@@ -62,6 +79,15 @@ export function parseConfig(value: unknown): Config {
   check(port(c.healthPort) && c.healthPort >= 1024 && c.healthPort !== c.proxyPort && c.healthPort !== c.socksPort && !(c.healthPort >= c.listenerStart && c.healthPort <= c.listenerEnd), 'INVALID_HEALTH_PORT');
   check(Number.isInteger(c.maxSessions) && c.maxSessions >= 1 && c.maxSessions <= 500, 'INVALID_SESSION_LIMIT');
   check(Number.isInteger(c.maintenanceSeconds) && c.maintenanceSeconds >= 60 && c.maintenanceSeconds <= 3600, 'INVALID_MAINTENANCE_INTERVAL');
+  check(Number.isInteger(c.minTunnelExpirationHours) && c.minTunnelExpirationHours >= 1 && c.minTunnelExpirationHours <= 720, 'INVALID_MIN_TUNNEL_EXPIRATION');
+  check(Number.isInteger(c.maxTunnelExpirationHours) && c.maxTunnelExpirationHours >= c.minTunnelExpirationHours && c.maxTunnelExpirationHours <= 720, 'INVALID_MAX_TUNNEL_EXPIRATION');
+  check(Number.isInteger(c.defaultTunnelExpirationHours) && c.defaultTunnelExpirationHours >= c.minTunnelExpirationHours && c.defaultTunnelExpirationHours <= c.maxTunnelExpirationHours, 'INVALID_DEFAULT_TUNNEL_EXPIRATION');
+  check(Number.isInteger(c.microsoftExpectedAuthHours) && c.microsoftExpectedAuthHours >= 1 && c.microsoftExpectedAuthHours <= 8760, 'INVALID_MICROSOFT_AUTH_VALIDITY');
+  check(Number.isInteger(c.githubExpectedAuthHours) && c.githubExpectedAuthHours >= 1 && c.githubExpectedAuthHours <= 8760, 'INVALID_GITHUB_AUTH_VALIDITY');
+  check(Number.isInteger(c.authWarningHours) && c.authWarningHours >= 1 && c.authWarningHours <= 720 &&
+    c.authWarningHours <= c.microsoftExpectedAuthHours && c.authWarningHours <= c.githubExpectedAuthHours,
+  'INVALID_AUTH_WARNING');
+  check(Number.isInteger(c.authCheckSeconds) && c.authCheckSeconds >= 300 && c.authCheckSeconds <= 3600, 'INVALID_AUTH_CHECK_INTERVAL');
   check(Array.isArray(c.allowedProviders) && c.allowedProviders.length > 0 && c.allowedProviders.every(p => ['microsoft','github'].includes(p)), 'INVALID_PROVIDERS');
   check(Array.isArray(c.allowedMicrosoftTenants) && c.allowedMicrosoftTenants.every(t => typeof t === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t)), 'INVALID_TENANT_ALLOWLIST');
   check(Array.isArray(c.allowedDomains) && c.allowedDomains.length <= 1000 && c.allowedDomains.every(d =>

@@ -71,16 +71,30 @@ const roleName = {
   viewer: "Leitor",
 };
 const actions = {
-  add: "Criar sessão",
+  add: "Criar túnel",
+  connect: "Conectar",
+  reconnect: "Reconectar",
   login: "Autenticar",
   start: "Iniciar",
   stop: "Parar",
   logout: "Desconectar conta",
-  remove: "Remover sessão",
+  remove: "Remover do Hub",
+  configure: "Atualizar validade",
 };
 const messages = {
   LOGIN_FAILED: "Credenciais inválidas ou provedor indisponível.",
   LOGIN_REQUIRED: "Sua sessão expirou. Entre novamente.",
+  LOGIN_TOKEN_EXPIRED:
+    "O login do Dev Tunnel expirou. Use Conectar ou Reconectar para autenticar novamente.",
+  IDENTITY_SCHEMA_UNSUPPORTED:
+    "O CLI retornou um formato de identidade desconhecido. Verifique a versão do Dev Tunnel CLI.",
+  INVALID_TUNNEL_EXPIRATION:
+    "A validade do recurso está fora dos limites definidos pelo administrador.",
+  INVALID_AUTH_VALIDITY: "A validade esperada da autenticação é inválida.",
+  INVALID_AUTH_WARNING:
+    "O aviso deve ser menor ou igual à validade esperada da autenticação.",
+  SESSION_EXPIRATION_OUTSIDE_POLICY:
+    "Existem túneis cuja validade está fora dos novos limites administrativos.",
   PASSWORD_TOO_WEAK: "Use uma senha com pelo menos 14 caracteres.",
   PASSWORD_CHANGE_REQUIRED: "Altere sua senha para continuar.",
   ACCOUNT_PENDING_APPROVAL:
@@ -352,6 +366,17 @@ function setupPolicy(data) {
     socksPort: Number(data.get("socksPort")),
     maxSessions: Number(data.get("maxSessions")),
     maintenanceSeconds: Number(data.get("maintenanceSeconds")),
+    defaultTunnelExpirationHours: Number(
+      data.get("defaultTunnelExpirationHours"),
+    ),
+    minTunnelExpirationHours: Number(data.get("minTunnelExpirationHours")),
+    maxTunnelExpirationHours: Number(data.get("maxTunnelExpirationHours")),
+    microsoftExpectedAuthHours: Number(
+      data.get("microsoftExpectedAuthHours"),
+    ),
+    githubExpectedAuthHours: Number(data.get("githubExpectedAuthHours")),
+    authWarningHours: Number(data.get("authWarningHours")),
+    authCheckSeconds: Number(data.get("authCheckSeconds")),
     allowedPorts: String(data.get("allowedPorts"))
       .split(",")
       .map((value) => Number(value.trim())),
@@ -378,7 +403,7 @@ async function setupWizard() {
   const context = await api("/setup/context");
   csrf = context.csrf;
   const c = context.config;
-  app.innerHTML = `<main class="setup-page"><div class="setup-top">${brand()}${themeToggle()}</div><div class="setup-heading"><span class="eyebrow">CONFIGURAÇÃO INICIAL</span><h1>Prepare seu DevTunnel Toolkit</h1><p>Revise a infraestrutura, defina a política de acesso e proteja a conta administrativa.</p></div><ol class="setup-steps" aria-label="Etapas"><li class="done">1<span>Acesso</span></li><li class="active">2<span>Infraestrutura</span></li><li class="active">3<span>Política</span></li><li class="active">4<span>Administrador</span></li></ol><form id="setup-form"><section class="panel"><div class="panel-head"><div><span class="eyebrow">ETAPA 2</span><h2>Infraestrutura do container</h2></div>${icon("shield")}</div><div class="panel-body"><div class="note">Edite o perfil desejado para o próximo deploy ou reinício. Referências <code>env://NOME</code> são aceitas. O executor precisa receber esses valores para aplicá-los.</div>${infrastructureEditor(context.infrastructure, context.infrastructureProfile, false)}<details class="effective-infrastructure"><summary>Ver valores efetivos desta execução</summary>${infrastructureTable(context.infrastructure, context.infrastructureProfile)}</details></div></section><section class="panel"><div class="panel-head"><div><span class="eyebrow">ETAPA 3</span><h2>Política de túneis</h2></div>${icon("settings")}</div><div class="panel-body"><div class="form-grid"><div class="field full">${check("Habilitar SOCKS5 TCP CONNECT", "socksEnabled", c.socksEnabled)}</div>${field("Porta HTTP / CONNECT", "proxyPort", c.proxyPort, "number", "Padrão 3140.", 'required min="1024" max="65535"')}${field("Porta SOCKS5", "socksPort", c.socksPort, "number", "Padrão 3180.", 'required min="1024" max="65535"')}${field("Template dos túneis", "tunnelNameTemplate", c.tunnelNameTemplate, "text", "Use {hub_id} e {username}.", "required")}${field("Limite de sessões", "maxSessions", c.maxSessions, "number", "", 'required min="1" max="500"')}${field("Portas permitidas", "allowedPorts", c.allowedPorts.join(","), "text", "Separadas por vírgula.", "required")}${field("Portas CONNECT", "connectPorts", c.connectPorts.join(","), "text", "Devem estar nas portas permitidas.", "required")}${field("Manutenção em segundos", "maintenanceSeconds", c.maintenanceSeconds, "number", "", 'required min="60" max="3600"')}${area("Domínios permitidos", "allowedDomains", c.allowedDomains.join("\n"), "Um por linha. Vazio bloqueia todos.")}${area("Tenants Microsoft", "allowedMicrosoftTenants", c.allowedMicrosoftTenants.join("\n"), "UUIDs, um por linha. Vazio aceita qualquer tenant.")}<div class="field full check-grid">${check("Microsoft", "microsoft", c.allowedProviders.includes("microsoft"))}${check("GitHub", "github", c.allowedProviders.includes("github"))}${check("Permitir todos os domínios e IPs", "allowAllDomains", c.allowAllDomains)}</div></div></div></section><section class="panel"><div class="panel-head"><div><span class="eyebrow">ETAPA 4</span><h2>Administrador de recuperação</h2></div>${icon("key")}</div><div class="panel-body"><div class="note">A senha é derivada com scrypt e o estado do console é criptografado. A recuperação continua disponível pelo CLI do container.</div><div class="form-grid">${field("Senha do administrador", "password", "", "password", "Mínimo de 14 caracteres.", 'required minlength="14" maxlength="1024" autocomplete="new-password"')}${field("Confirmar senha", "passwordConfirmation", "", "password", "", 'required minlength="14" maxlength="1024" autocomplete="new-password"')}</div></div></section><p class="form-error" role="alert"></p><div class="setup-actions"><span>As configurações serão validadas antes da conclusão.</span><button class="primary" type="submit">Concluir configuração ${icon("arrow")}</button></div></form></main>`;
+  app.innerHTML = `<main class="setup-page"><div class="setup-top">${brand()}${themeToggle()}</div><div class="setup-heading"><span class="eyebrow">CONFIGURAÇÃO INICIAL</span><h1>Prepare seu DevTunnel Toolkit</h1><p>Revise a infraestrutura, defina a política de acesso e proteja a conta administrativa.</p></div><ol class="setup-steps" aria-label="Etapas"><li class="done">1<span>Acesso</span></li><li class="active">2<span>Infraestrutura</span></li><li class="active">3<span>Política</span></li><li class="active">4<span>Administrador</span></li></ol><form id="setup-form"><section class="panel"><div class="panel-head"><div><span class="eyebrow">ETAPA 2</span><h2>Infraestrutura do container</h2></div>${icon("shield")}</div><div class="panel-body"><div class="note">Edite o perfil desejado para o próximo deploy ou reinício. Referências <code>env://NOME</code> são aceitas. O executor precisa receber esses valores para aplicá-los.</div>${infrastructureEditor(context.infrastructure, context.infrastructureProfile, false)}<details class="effective-infrastructure"><summary>Ver valores efetivos desta execução</summary>${infrastructureTable(context.infrastructure, context.infrastructureProfile)}</details></div></section><section class="panel"><div class="panel-head"><div><span class="eyebrow">ETAPA 3</span><h2>Política de túneis</h2></div>${icon("settings")}</div><div class="panel-body"><div class="form-grid"><div class="field full">${check("Habilitar SOCKS5 TCP CONNECT", "socksEnabled", c.socksEnabled)}</div>${field("Porta HTTP / CONNECT", "proxyPort", c.proxyPort, "number", "Padrão 3140.", 'required min="1024" max="65535"')}${field("Porta SOCKS5", "socksPort", c.socksPort, "number", "Padrão 3180.", 'required min="1024" max="65535"')}${field("Template dos túneis", "tunnelNameTemplate", c.tunnelNameTemplate, "text", "Use {hub_id} e {username}.", "required")}${field("Limite de sessões", "maxSessions", c.maxSessions, "number", "", 'required min="1" max="500"')}${field("Portas permitidas", "allowedPorts", c.allowedPorts.join(","), "text", "Separadas por vírgula.", "required")}${field("Portas CONNECT", "connectPorts", c.connectPorts.join(","), "text", "Devem estar nas portas permitidas.", "required")}${field("Manutenção em segundos", "maintenanceSeconds", c.maintenanceSeconds, "number", "", 'required min="60" max="3600"')}${field("Expiração padrão do recurso (horas)", "defaultTunnelExpirationHours", c.defaultTunnelExpirationHours, "number", "Janela deslizante de inatividade.", 'required min="1" max="720"')}${field("Expiração mínima (horas)", "minTunnelExpirationHours", c.minTunnelExpirationHours, "number", "", 'required min="1" max="720"')}${field("Expiração máxima (horas)", "maxTunnelExpirationHours", c.maxTunnelExpirationHours, "number", "", 'required min="1" max="720"')}${field("Login Microsoft esperado (horas)", "microsoftExpectedAuthHours", c.microsoftExpectedAuthHours, "number", "Estimativa operacional.", 'required min="1" max="8760"')}${field("Login GitHub esperado (horas)", "githubExpectedAuthHours", c.githubExpectedAuthHours, "number", "Estimativa operacional.", 'required min="1" max="8760"')}${field("Avisar antes (horas)", "authWarningHours", c.authWarningHours, "number", "", 'required min="1" max="720"')}${field("Verificar login a cada (segundos)", "authCheckSeconds", c.authCheckSeconds, "number", "", 'required min="300" max="3600"')}${area("Domínios permitidos", "allowedDomains", c.allowedDomains.join("\n"), "Um por linha. Vazio bloqueia todos.")}${area("Tenants Microsoft", "allowedMicrosoftTenants", c.allowedMicrosoftTenants.join("\n"), "UUIDs, um por linha. Vazio aceita qualquer tenant.")}<div class="field full check-grid">${check("Microsoft", "microsoft", c.allowedProviders.includes("microsoft"))}${check("GitHub", "github", c.allowedProviders.includes("github"))}${check("Permitir todos os domínios e IPs", "allowAllDomains", c.allowAllDomains)}</div></div></div></section><section class="panel"><div class="panel-head"><div><span class="eyebrow">ETAPA 4</span><h2>Administrador de recuperação</h2></div>${icon("key")}</div><div class="panel-body"><div class="note">A senha é derivada com scrypt e o estado do console é criptografado. A recuperação continua disponível pelo CLI do container.</div><div class="form-grid">${field("Senha do administrador", "password", "", "password", "Mínimo de 14 caracteres.", 'required minlength="14" maxlength="1024" autocomplete="new-password"')}${field("Confirmar senha", "passwordConfirmation", "", "password", "", 'required minlength="14" maxlength="1024" autocomplete="new-password"')}</div></div></section><p class="form-error" role="alert"></p><div class="setup-actions"><span>As configurações serão validadas antes da conclusão.</span><button class="primary" type="submit">Concluir configuração ${icon("arrow")}</button></div></form></main>`;
   const form = $("#setup-form");
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -444,7 +469,7 @@ async function loginPage() {
   const options = await api("/auth/options");
   const external = options.providers.filter((p) => p.kind !== "ldap"),
     ldap = options.providers.filter((p) => p.kind === "ldap");
-  app.innerHTML = `<main class="login-form-area"><section class="login-form" aria-labelledby="login-title">${brand()}<h1 id="login-title">Entre na sua conta</h1><p>Gerencie suas conexões em um só lugar.</p><div class="login-providers">${external.map(loginProviderButton).join("")}</div>${external.length ? '<div class="or">ou use suas credenciais</div>' : ""}<form id="login-form">${ldap.length ? select("Autenticar em", "provider", [["", "Conta local"], ...ldap.map((p) => [p.id, p.label])], "") : ""}${field("Usuário", "username", "", "text", "", 'required autocomplete="username" maxlength="256"')}${field("Senha", "password", "", "password", "", 'required autocomplete="current-password" maxlength="1024"')}<button type="submit" class="primary">Entrar no console ${icon("arrow")}</button><p class="form-error" role="alert"></p></form><ul class="login-features" aria-label="Recursos do console"><li>${icon("users")}<span>Identidades<br>individuais</span></li><li>${icon("tunnel")}<span>Túneis<br>privados</span></li><li>${icon("shield")}<span>Auditoria<br>por sessão</span></li></ul><details class="login-help"><summary>Primeiro acesso ou recuperação do administrador?</summary><p>Defina a senha pelo CLI do container:<br><code>hub admin reset-password admin --password-stdin</code></p></details></section></main>`;
+  app.innerHTML = `<main class="login-form-area"><section class="login-form" aria-labelledby="login-title">${brand()}<h1 id="login-title">Entre na sua conta</h1><p>Gerencie suas conexões em um só lugar.</p><div class="login-providers">${external.map(loginProviderButton).join("")}</div>${external.length ? '<div class="or">ou use suas credenciais</div>' : ""}<form id="login-form">${ldap.length ? select("Autenticar em", "provider", [["", "Conta local"], ...ldap.map((p) => [p.id, p.label])], "") : ""}${field("Usuário", "username", "", "text", "", 'required autocomplete="username" maxlength="256"')}${field("Senha", "password", "", "password", "", 'required autocomplete="current-password" maxlength="1024"')}<button type="submit" class="primary">Entrar no console ${icon("arrow")}</button><p class="form-error" role="alert"></p></form><ul class="login-features" aria-label="Recursos do console"><li>${icon("users")}<span>Identidades<br>individuais</span></li><li>${icon("tunnel")}<span>Túneis<br>privados</span></li><li>${icon("shield")}<span>Auditoria<br>por túnel</span></li></ul><details class="login-help"><summary>Primeiro acesso ou recuperação do administrador?</summary><p>Defina a senha pelo CLI do container:<br><code>hub admin reset-password admin --password-stdin</code></p></details></section></main>`;
   $(".login-form-area").insertAdjacentHTML(
     "afterbegin",
     `<div class="login-theme">${themeToggle()}</div>`,
@@ -551,14 +576,12 @@ function sessionStats(sessions) {
   const running = sessions.filter(
     (session) => session.status === "running",
   ).length;
-  const attention = sessions.filter((session) =>
-    ["error", "reauth_required", "login_required"].includes(session.status),
-  ).length;
+  const attention = sessions.filter(sessionNeedsAttention).length;
   const users = new Set(
     sessions.map((session) => session.identity?.user_id).filter(Boolean),
   ).size;
   return [
-    ["Sessões", "tunnel", sessions.length, "No seu escopo de acesso"],
+    ["Túneis", "tunnel", sessions.length, "No seu escopo de acesso"],
     ["Conectadas", "activity", running, "Relays em execução"],
     ["Identidades", "users", users, "Contas autenticadas nos túneis"],
     ["Precisam de atenção", "shield", attention, "Login pendente ou erro"],
@@ -582,7 +605,7 @@ function sessionFilters() {
   const options = states
     .map((state) => option(state, labels[state], statusFilter === state))
     .join("");
-  return `<div class="toolbar"><div class="search">${icon("search")}<input id="search" type="search" placeholder="Buscar sessão, conta ou túnel..." aria-label="Buscar sessões" value="${escapeHtml(filter)}"></div><select id="status-filter" aria-label="Filtrar estado"><option value="">Todos os estados</option>${options}</select></div>`;
+  return `<div class="toolbar"><div class="search">${icon("search")}<input id="search" type="search" placeholder="Buscar túnel ou conta..." aria-label="Buscar túneis" value="${escapeHtml(filter)}"></div><select id="status-filter" aria-label="Filtrar estado"><option value="">Todos os estados</option>${options}</select></div>`;
 }
 function isolationPanel() {
   const socksPort = overview.socksEnabled ? overview.socksPort : "Desabilitado";
@@ -591,7 +614,7 @@ function isolationPanel() {
 function renderSessionView(workspace) {
   const create =
     me.role === "admin"
-      ? `<button class="primary" data-create>${icon("plus")}Nova sessão</button>`
+      ? `<button class="primary" data-create>${icon("plus")}Novo túnel</button>`
       : "";
   const buttons = `<button data-refresh>${icon("refresh")}Atualizar</button>${create}`;
   const title = heading(
@@ -599,7 +622,7 @@ function renderSessionView(workspace) {
     "Controle conexões, identidades e disponibilidade em tempo real.",
     buttons,
   );
-  workspace.innerHTML = `${title}<div class="stats">${sessionStats(overview.sessions)}</div><section class="panel"><div class="panel-head"><div><h2>Sessões do workspace</h2><p>Túnel privado por identidade. Squid compartilhado com listeners isolados.</p></div>${statusBadge(overview.ready ? "active" : "error")}</div>${sessionFilters()}<div id="session-table"></div></section><div class="split"><section class="panel"><div class="panel-head"><h2>Operações recentes</h2><button class="ghost small" data-nav="operations">Ver todas ${icon("arrow")}</button></div>${jobList(overview.jobs.slice(-4).reverse())}</section>${isolationPanel()}</div><div class="footer-note">SSE autenticado · Horários locais do navegador</div>`;
+  workspace.innerHTML = `${title}<div class="stats">${sessionStats(overview.sessions)}</div><section class="panel"><div class="panel-head"><div><h2>Túneis do workspace</h2><p>Túnel privado por identidade. Squid compartilhado com listeners isolados.</p></div>${statusBadge(overview.ready ? "active" : "error")}</div>${sessionFilters()}<div id="session-table"></div></section><div class="split"><section class="panel"><div class="panel-head"><h2>Operações recentes</h2><button class="ghost small" data-nav="operations">Ver todas ${icon("arrow")}</button></div>${jobList(overview.jobs.slice(-4).reverse())}</section>${isolationPanel()}</div><div class="footer-note">SSE autenticado · Horários locais do navegador</div>`;
   renderSessions();
   $("#search").addEventListener("input", (event) => {
     filter = event.target.value;
@@ -615,7 +638,7 @@ function renderOperations(workspace) {
     "Operações",
     "Ações estruturadas do CLI, com estado e resultado por execução.",
   );
-  workspace.innerHTML = `${title}<section class="panel"><div class="panel-head"><h2>Histórico recente</h2><span class="muted">Retenção em memória: até 10 min após conclusão</span></div>${jobList([...overview.jobs].reverse())}</section><div class="note">Não há terminal shell remoto. Login, criação, início, parada, logout e remoção usam ações validadas. Um código de dispositivo só aparece para quem iniciou o login.</div>`;
+  workspace.innerHTML = `${title}<section class="panel"><div class="panel-head"><h2>Histórico recente</h2><span class="muted">Retenção em memória: até 10 min após conclusão</span></div>${jobList([...overview.jobs].reverse())}</section><div class="note">Não há terminal shell remoto. Criação, conexão, reconexão, parada e ações avançadas usam comandos validados. Um código de dispositivo só aparece para quem iniciou o login.</div>`;
 }
 function renderLogView(workspace) {
   const button = `<button data-pause>${icon(paused ? "play" : "stop")}${paused ? "Retomar" : "Pausar"}</button>`;
@@ -631,6 +654,53 @@ function pendingPort(actual, configured, label = "Ao iniciar") {
   return actual === configured
     ? ""
     : `<small>${escapeHtml(label)}: ${escapeHtml(configured)}</small>`;
+}
+function dateTime(value) {
+  if (!value) return "Não disponível";
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : "Não disponível";
+}
+function remaining(value) {
+  if (!value) return "Não disponível";
+  const milliseconds = new Date(value).getTime() - Date.now();
+  if (!Number.isFinite(milliseconds)) return "Não disponível";
+  if (milliseconds <= 0) return "Expirado";
+  const minutes = Math.ceil(milliseconds / 60000);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const rest = minutes % 60;
+  return [days ? `${days}d` : "", hours ? `${hours}h` : "", `${rest}min`]
+    .filter(Boolean)
+    .join(" ");
+}
+function authSummary(session) {
+  if (session.status === "reauth_required") return "Login expirado";
+  if (session.auth_expected_reauth_at) {
+    const milliseconds =
+      new Date(session.auth_expected_reauth_at).getTime() - Date.now();
+    if (Number.isFinite(milliseconds) && milliseconds <= 0)
+      return "Janela estimada atingida - aguardando verificação do login";
+    if (
+      Number.isFinite(milliseconds) &&
+      milliseconds <= (session.auth_warning_hours ?? 2) * 3600000
+    )
+      return `Atenção: reautenticação estimada em ${remaining(session.auth_expected_reauth_at)}`;
+    return `Reautenticação estimada em ${remaining(session.auth_expected_reauth_at)}`;
+  }
+  if (session.auth_last_verified_at)
+    return `Verificado em ${dateTime(session.auth_last_verified_at)}`;
+  return "Autenticação ainda não observada";
+}
+function sessionNeedsAttention(session) {
+  if (["error", "reauth_required", "login_required"].includes(session.status))
+    return true;
+  if (!session.auth_expected_reauth_at) return false;
+  const milliseconds =
+    new Date(session.auth_expected_reauth_at).getTime() - Date.now();
+  return (
+    Number.isFinite(milliseconds) &&
+    milliseconds <= (session.auth_warning_hours ?? 2) * 3600000
+  );
 }
 function socksMapping(session) {
   if (!session.socks_port) {
@@ -649,8 +719,9 @@ function proxyMapping(session) {
 function primaryAction(session) {
   if (["running", "starting"].includes(session.status))
     return ["stop", "stop", "Parar"];
-  if (session.status.includes("login")) return ["login", "key", "Login"];
-  return ["start", "play", "Iniciar"];
+  if (session.status === "reauth_required")
+    return ["reconnect", "refresh", "Reconectar"];
+  return ["connect", "play", "Conectar"];
 }
 function sessionButtons(session) {
   const [action, kind, label] = primaryAction(session);
@@ -658,15 +729,29 @@ function sessionButtons(session) {
     me.role === "viewer"
       ? ""
       : `<button class="small" data-action="${action}" data-id="${escapeHtml(session.id)}">${icon(kind)}${label}</button>`;
-  return `<div class="row-actions">${primary}<button class="small" data-detail="${escapeHtml(session.id)}" title="Detalhes e ações" aria-label="Detalhes de ${escapeHtml(session.id)}">${icon("dots")}</button></div>`;
+  return `<div class="row-actions">${primary}<button class="small" data-detail="${escapeHtml(session.id)}" title="Detalhes e ações" aria-label="Detalhes de ${escapeHtml(sessionLabel(session))}">${icon("dots")}</button></div>`;
 }
 function sessionRow(session) {
   const provider = session.provider === "github" ? "GitHub" : "Microsoft";
-  return `<tr><td><div class="cell-title"><span class="cell-icon">${icon("tunnel")}</span><div><strong>${escapeHtml(session.id)}</strong><small>${escapeHtml(session.identity?.user_login ?? "Identidade ainda não vinculada")}</small></div></div></td><td><code>${escapeHtml(session.tunnel_id ?? session.tunnel_name ?? "Resolvido após login")}</code><small>${escapeHtml(session.error ?? "Acesso privado")}</small></td><td>${provider}</td><td>${statusBadge(session.status)}</td><td>${proxyMapping(session)}</td><td>${sessionButtons(session)}</td></tr>`;
+  return `<tr><td><div class="cell-title"><span class="cell-icon">${icon("tunnel")}</span><div><strong>${escapeHtml(sessionLabel(session))}</strong><small>${escapeHtml(session.identity?.user_login ?? "Identidade ainda não vinculada")}</small></div></div></td><td>${provider}</td><td>${statusBadge(session.status)}<small>${escapeHtml(session.error ? messages[session.error] ?? session.error : authSummary(session))}</small></td><td>${proxyMapping(session)}</td><td>${sessionButtons(session)}</td></tr>`;
+}
+function sessionLabel(session) {
+  if (session.tunnel_id) return session.tunnel_id;
+  if (session.tunnel_name) return session.tunnel_name;
+  return `Novo túnel ${session.provider === "github" ? "GitHub" : "Microsoft"}`;
+}
+function sessionLabelById(id) {
+  const session = overview.sessions.find((candidate) => candidate.id === id);
+  return session ? sessionLabel(session) : "Túnel em preparação";
 }
 function sessionMatches(session) {
   if (statusFilter && session.status !== statusFilter) return false;
-  return [session.id, session.identity?.user_login, session.tunnel_id]
+  return [
+    session.id,
+    session.identity?.user_login,
+    session.tunnel_id,
+    session.tunnel_name,
+  ]
     .join(" ")
     .toLowerCase()
     .includes(filter.toLowerCase());
@@ -678,22 +763,22 @@ function renderSessions() {
   if (!rows.length) {
     const filtered = filter || statusFilter;
     target.innerHTML = empty(
-      filtered ? "Nenhum resultado" : "Nenhuma sessão ainda",
+      filtered ? "Nenhum resultado" : "Nenhum túnel ainda",
       filtered
         ? "Tente ajustar os filtros."
-        : "Crie uma sessão e autentique a conta que será proprietária do túnel.",
+        : "Crie um túnel e autentique a conta que será proprietária.",
     );
     return;
   }
   const content = rows.map(sessionRow).join("");
-  target.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Sessão / identidade</th><th>Túnel</th><th>Provedor</th><th>Estado</th><th>Mapeamento</th><th>Ações</th></tr></thead><tbody>${content}</tbody></table></div><div class="table-foot"><span>${rows.length} de ${overview.sessions.length} sessões</span><span>Uma identidade por sessão</span></div>`;
+  target.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Túnel / identidade</th><th>Provedor</th><th>Estado</th><th>Mapeamento</th><th>Ações</th></tr></thead><tbody>${content}</tbody></table></div><div class="table-foot"><span>${rows.length} de ${overview.sessions.length} túneis</span><span>Uma identidade por túnel</span></div>`;
 }
 function jobItem(job) {
   const error = job.error ? ` · ${escapeHtml(job.error)}` : "";
   const deviceButton = job.device
     ? `<button class="small" data-device="${escapeHtml(job.id)}">Exibir código</button>`
     : "";
-  return `<div class="activity-item"><span class="cell-icon">${icon(job.action === "login" ? "key" : "activity")}</span><div class="body"><strong>${escapeHtml(actions[job.action] ?? job.action)} <span class="muted">/ ${escapeHtml(job.session)}</span></strong><small>${escapeHtml(new Date(job.createdAt).toLocaleString())}${error}</small></div>${statusBadge(job.status)}${deviceButton}</div>`;
+  return `<div class="activity-item"><span class="cell-icon">${icon(["login", "connect", "reconnect"].includes(job.action) ? "key" : "activity")}</span><div class="body"><strong>${escapeHtml(actions[job.action] ?? job.action)} <span class="muted">/ ${escapeHtml(sessionLabelById(job.session))}</span></strong><small>${escapeHtml(new Date(job.createdAt).toLocaleString())}${error}</small></div>${statusBadge(job.status)}${deviceButton}</div>`;
 }
 function jobList(jobs) {
   if (!jobs.length)
@@ -1063,13 +1148,25 @@ function passwordForm(required = false) {
   });
 }
 function newSession() {
+  const policy = overview.validityPolicy ?? {
+    defaultTunnelExpirationHours: 48,
+    minTunnelExpirationHours: 1,
+    maxTunnelExpirationHours: 720,
+    microsoftExpectedAuthHours: 24,
+    githubExpectedAuthHours: 720,
+    authWarningHours: 2,
+  };
+  const providerDefault = (provider) =>
+    provider === "github"
+      ? policy.githubExpectedAuthHours
+      : policy.microsoftExpectedAuthHours;
   const socksNote = overview.socksEnabled
     ? ` SOCKS5 TCP: ${escapeHtml(overview.socksPort)}.`
     : "";
   modal(
-    "Nova sessão",
-    "Crie o vínculo local. O túnel remoto será provisionado ao iniciar.",
-    `<form><div class="form-grid">${field("ID da sessão", "id", "", "text", "3 a 32 caracteres: letras minúsculas, números e hífen.", 'required pattern="[a-z][a-z0-9-]{1,30}[a-z0-9]"')}${select(
+    "Novo túnel",
+    "Escolha a conta. O recurso remoto será provisionado ao conectar.",
+    `<form><div class="form-grid">${select(
       "Conta do túnel",
       "provider",
       overview.providers.map((p) => [
@@ -1077,23 +1174,38 @@ function newSession() {
         p === "github" ? "GitHub" : "Microsoft",
       ]),
       overview.providers[0],
-    )}${field("Nome fixo opcional", "tunnelName", "", "text", "Deixe vazio para resolver pelo Hub ID e login verificado.", 'maxlength="49"')}</div><div class="note">Depois da criação, autentique a conta e inicie a sessão. HTTP/CONNECT: ${escapeHtml(overview.proxyPort)}.${socksNote}</div>${formEnd("Criar sessão")}</form>`,
+    )}${field("Nome fixo opcional", "tunnelName", "", "text", "Deixe vazio para resolver pelo Hub ID e login verificado.", 'maxlength="49"')}${field("Expiração por inatividade (horas)", "tunnelExpirationHours", policy.defaultTunnelExpirationHours, "number", `Permitido: ${policy.minTunnelExpirationHours} a ${policy.maxTunnelExpirationHours} horas.`, `required min="${policy.minTunnelExpirationHours}" max="${policy.maxTunnelExpirationHours}" step="1"`)}${field("Validade esperada do login (horas)", "authExpectedHours", policy.microsoftExpectedAuthHours, "number", "Estimativa operacional, não é uma expiração garantida pelo provedor.", 'required min="1" max="8760" step="1"')}${field("Avisar antes (horas)", "authWarningHours", policy.authWarningHours, "number", "Antecedência para destacar a reautenticação esperada.", 'required min="1" max="720" step="1"')}</div><div class="note">O identificador interno é gerado automaticamente. Use Conectar para autenticar e iniciar o túnel. HTTP/CONNECT: ${escapeHtml(overview.proxyPort)}.${socksNote}</div>${formEnd("Criar túnel")}</form>`,
   );
+  const provider = dialog.querySelector('[name="provider"]');
+  provider.addEventListener("change", () => {
+    dialog.querySelector('[name="authExpectedHours"]').value = providerDefault(
+      provider.value,
+    );
+  });
   wireForm(async (data) => {
-    await submitAction("add", data.get("id"), {
+    await submitAction("add", undefined, {
       provider: data.get("provider"),
       ...(data.get("tunnelName") ? { tunnelName: data.get("tunnelName") } : {}),
+      tunnelExpirationHours: Number(data.get("tunnelExpirationHours")),
+      authExpectedHours: Number(data.get("authExpectedHours")),
+      authWarningHours: Number(data.get("authWarningHours")),
     });
   });
 }
 async function submitAction(action, id, extra = {}) {
-  const { job } = await api("/jobs", { action, session: id, ...extra });
+  const { job } = await api("/jobs", {
+    action,
+    ...(id ? { session: id } : {}),
+    ...extra,
+  });
   dialog.close();
   toast(`${actions[action]}: operação iniciada.`);
-  if (action === "login")
+  if (["login", "connect", "reconnect"].includes(action))
     modal(
       "Autenticar conta do túnel",
-      "Conclua o login no site oficial do provedor.",
+      action === "reconnect"
+        ? "Faça novamente o login. O túnel iniciará após validar a mesma identidade."
+        : "Conclua o login quando solicitado. O túnel iniciará automaticamente.",
       `<div data-wait-job="${escapeHtml(job.id)}">${empty("Preparando autenticação", "Aguardando o código de dispositivo. Não feche o serviço.", "key")}</div>`,
     );
   await refresh(true);
@@ -1102,28 +1214,38 @@ function device(job) {
   if (!job?.device) return;
   modal(
     "Autenticar conta do túnel",
-    `Sessão ${job.session} - código visível somente para quem iniciou.`,
+    `${sessionLabelById(job.session)} - código visível somente para quem iniciou.`,
     `<div data-wait-job="${escapeHtml(job.id)}" data-device-code="${escapeHtml(job.device.code)}"><div class="note">Abra o site oficial em outra aba e informe o código abaixo. Esta autenticação não altera sua conta do console.</div><a href="${escapeHtml(job.device.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(job.device.url)}</a><div class="device-code">${escapeHtml(job.device.code)}</div><p class="hint">Aguardando a conclusão. O código será removido ao terminar.</p></div>`,
   );
 }
 const actionIcons = {
+  connect: "play",
+  reconnect: "refresh",
   login: "key",
   start: "play",
   stop: "stop",
   logout: "exit",
   remove: "exit",
+  configure: "settings",
 };
 function sessionActionButton(action, id) {
   return `<button class="${action === "remove" ? "danger" : ""}" data-action="${action}" data-id="${escapeHtml(id)}">${icon(actionIcons[action])}${actions[action]}</button>`;
 }
 function detailActions(id) {
   if (me.role === "viewer") return "";
-  const allowed = ["login", "start", "stop", "logout"];
-  if (me.role === "admin") allowed.push("remove");
-  const buttons = allowed
+  const main = ["connect", "stop", "reconnect"]
     .map((action) => sessionActionButton(action, id))
     .join("");
-  return `<div class="check-grid">${buttons}</div>`;
+  const advanced = ["login", "start", "logout"]
+    .map((action) => sessionActionButton(action, id))
+    .join("");
+  const remove =
+    me.role === "admin" ? sessionActionButton("remove", id) : "";
+  const configure =
+    me.role === "admin"
+      ? `<button data-validity="${escapeHtml(id)}">${icon("settings")}Configurar validade</button>`
+      : "";
+  return `<div class="check-grid">${main}${configure}</div><details class="advanced-actions"><summary>Ações avançadas</summary><div class="check-grid">${advanced}${remove}</div></details>`;
 }
 function sessionDetails(session) {
   const socks = session.socks_port
@@ -1133,8 +1255,44 @@ function sessionDetails(session) {
     ["Estado", labels[session.status]],
     ["Provedor", session.provider],
     ["Login", session.identity?.user_login ?? "Não autenticado"],
-    ["ID estável", session.identity?.user_id ?? "-"],
+    ["Identidade imutável do provedor", session.identity?.user_id ?? "-"],
+    ["Login interativo em", dateTime(session.authenticated_at)],
+    ["Última verificação do login", dateTime(session.auth_last_verified_at)],
+    [
+      "Reautenticação esperada",
+      session.auth_expected_reauth_at
+        ? `${dateTime(session.auth_expected_reauth_at)} (${remaining(session.auth_expected_reauth_at)}) - estimativa`
+        : "Não disponível",
+    ],
+    ["Validade esperada configurada", `${session.auth_expected_hours} horas`],
+    ["Aviso de reautenticação", `${session.auth_warning_hours} horas antes`],
+    ["Token de host obtido em", dateTime(session.host_token_issued_at)],
+    [
+      "Token de host expira",
+      session.host_token_expires_at
+        ? `${dateTime(session.host_token_expires_at)} (${remaining(session.host_token_expires_at)}) - exato`
+        : "Não disponível",
+    ],
     ["Túnel", session.tunnel_id ?? session.tunnel_name ?? "A resolver"],
+    [
+      "Janela de inatividade configurada",
+      `${session.tunnel_expiration_hours} horas`,
+    ],
+    [
+      "Janela confirmada pelo serviço",
+      Number.isInteger(session.tunnel_custom_expiration_seconds)
+        ? `${session.tunnel_custom_expiration_seconds / 3600} horas`
+        : "Não disponível",
+    ],
+    [
+      "Recurso remoto expira",
+      session.tunnel_expires_at
+        ? `${dateTime(session.tunnel_expires_at)} (${remaining(session.tunnel_expires_at)}) - informado pelo serviço`
+        : "Não disponível",
+    ],
+    ["Última verificação do recurso", dateTime(session.tunnel_last_verified_at)],
+    ["Última renovação do recurso", dateTime(session.tunnel_last_renewed_at)],
+    ["ID interno da sessão", session.id],
     ["Mapeamento atual", `${session.proxy_port} → ${session.listener}`],
     ["Porta configurada", overview.proxyPort],
     ["SOCKS5 atual", socks],
@@ -1146,28 +1304,50 @@ function sessionDetails(session) {
     ["Último erro", session.error ?? "Nenhum"],
   ]);
 }
+function validityForm(id) {
+  const session = overview.sessions.find((candidate) => candidate.id === id);
+  if (!session || me.role !== "admin") return;
+  const policy = overview.validityPolicy ?? {
+    minTunnelExpirationHours: 1,
+    maxTunnelExpirationHours: 720,
+  };
+  modal(
+    "Configurar validade",
+    sessionLabel(session),
+    `<form><div class="form-grid">${field("Expiração por inatividade (horas)", "tunnelExpirationHours", session.tunnel_expiration_hours, "number", `Permitido pelo administrador: ${policy.minTunnelExpirationHours} a ${policy.maxTunnelExpirationHours} horas.`, `required min="${policy.minTunnelExpirationHours}" max="${policy.maxTunnelExpirationHours}" step="1"`)}${field("Validade esperada do login (horas)", "authExpectedHours", session.auth_expected_hours, "number", "Contagem estimada desde o último login interativo.", 'required min="1" max="8760" step="1"')}${field("Avisar antes (horas)", "authWarningHours", session.auth_warning_hours, "number", "Deve ser menor ou igual à validade esperada.", 'required min="1" max="720" step="1"')}</div><div class="note">A expiração do recurso é uma janela deslizante de inatividade. A validade do login é uma estimativa; token de host e recurso usam as datas reais informadas pelo serviço.</div>${formEnd("Aplicar")}</form>`,
+  );
+  wireForm(async (data) => {
+    await submitAction("configure", id, {
+      tunnelExpirationHours: Number(data.get("tunnelExpirationHours")),
+      authExpectedHours: Number(data.get("authExpectedHours")),
+      authWarningHours: Number(data.get("authWarningHours")),
+    });
+  });
+}
 function detail(id) {
   const session = overview.sessions.find((candidate) => candidate.id === id);
   if (!session) return;
   modal(
-    session.id,
-    "Identidade, mapeamento e operações desta sessão.",
-    `<dl class="detail-grid">${sessionDetails(session)}</dl><div class="divider"></div>${detailActions(id)}<div class="divider"></div><p class="hint">Remover encerra a sessão local e preserva a reserva do nome. Não exclui o recurso remoto.</p>`,
+    sessionLabel(session),
+    "Identidade, mapeamento e operações deste túnel.",
+    `<dl class="detail-grid">${sessionDetails(session)}</dl><div class="divider"></div>${detailActions(id)}<div class="divider"></div><p class="hint">Remover encerra o vínculo local no Hub e preserva a reserva do nome. Não exclui o recurso remoto.</p>`,
   );
 }
 function confirmAction(action, id) {
+  const session = overview.sessions.find((candidate) => candidate.id === id);
+  const confirmation = session ? sessionLabel(session) : id;
   const warning =
     action === "remove"
-      ? "A sessão será marcada como removida e não poderá ser reutilizada. O túnel remoto não será excluído."
+      ? "O vínculo local será marcado como removido e não poderá ser reutilizado. O túnel remoto não será excluído."
       : "As credenciais do túnel serão desconectadas. Será necessário fazer login novamente.";
   modal(
     actions[action],
-    `Sessão ${id}`,
-    `<form><div class="note warning">${warning}</div>${field("Digite o ID da sessão para confirmar", "confirm", "", "text", "", 'required autocomplete="off"')}${formEnd("Confirmar")}</form>`,
+    confirmation,
+    `<form><div class="note warning">${warning}</div>${field("Digite o identificador do túnel para confirmar", "confirm", "", "text", "", 'required autocomplete="off"')}${formEnd("Confirmar")}</form>`,
   );
   wireForm(async (data) => {
-    if (data.get("confirm") !== id)
-      throw new Error("O ID informado não confere.");
+    if (data.get("confirm") !== confirmation)
+      throw new Error("O identificador informado não confere.");
     await submitAction(action, id);
   });
 }
@@ -1195,15 +1375,15 @@ function userSessionFields(user) {
   const fields = overview.sessions
     .map((session) =>
       check(
-        session.id,
+        sessionLabel(session),
         `session:${session.id}`,
         user?.sessions.includes(session.id),
       ),
     )
     .join("");
   const content =
-    fields || '<span class="hint">Nenhuma sessão cadastrada.</span>';
-  return `<div class="field full"><span class="field-label">Sessões permitidas (administrador acessa todas)</span><div class="check-grid">${content}</div></div>`;
+    fields || '<span class="hint">Nenhum túnel cadastrado.</span>';
+  return `<div class="field full"><span class="field-label">Túneis permitidos (administrador acessa todos)</span><div class="check-grid">${content}</div></div>`;
 }
 function userFields(user) {
   const fields = [
@@ -1488,7 +1668,7 @@ function policyForm() {
   modal(
     "Editar política operacional",
     "Pare todas as sessões antes de salvar. Nomes já resolvidos não mudam.",
-    `<form><div class="form-grid">${field("Porta do proxy", "proxyPort", c.proxyPort, "number", "De 1024 a 65535, sem conflito com listeners, saúde ou console. Atualizada no túnel ao iniciar a sessão. Reconecte o cliente e ajuste seu proxy local.", 'required min="1024" max="65535" step="1"')}${field("Template de nome", "tunnelNameTemplate", c.tunnelNameTemplate, "text", "", "required")}${field("Limite de sessões", "maxSessions", c.maxSessions, "number", "", 'required min="1" max="500"')}${field("Manutenção (segundos)", "maintenanceSeconds", c.maintenanceSeconds, "number", "", 'required min="60" max="3600"')}${field("Portas permitidas", "allowedPorts", c.allowedPorts.join(","), "text", "Separadas por vírgula.", "required")}${field("Portas CONNECT", "connectPorts", c.connectPorts.join(","), "text", "", "required")}${area("Domínios permitidos", "allowedDomains", c.allowedDomains.join("\n"), "Um por linha. Um ponto inicial inclui subdomínios.")}${area("Tenants Microsoft permitidos no túnel", "allowedMicrosoftTenants", c.allowedMicrosoftTenants.join("\n"), "UUIDs, um por linha. Vazio permite qualquer tenant.")}<div class="field full check-grid">${check("Microsoft nos túneis", "microsoft", c.allowedProviders.includes("microsoft"))}${check("GitHub nos túneis", "github", c.allowedProviders.includes("github"))}</div><div class="field full">${check("Permitir todos os domínios (inclui IPs literais)", "allowAllDomains", c.allowAllDomains)}</div></div>${formEnd("Aplicar política")}</form>`,
+    `<form><div class="form-grid">${field("Porta do proxy", "proxyPort", c.proxyPort, "number", "De 1024 a 65535, sem conflito com listeners, saúde ou console. Atualizada no túnel ao iniciar a sessão. Reconecte o cliente e ajuste seu proxy local.", 'required min="1024" max="65535" step="1"')}${field("Template de nome", "tunnelNameTemplate", c.tunnelNameTemplate, "text", "", "required")}${field("Limite de sessões", "maxSessions", c.maxSessions, "number", "", 'required min="1" max="500"')}${field("Manutenção (segundos)", "maintenanceSeconds", c.maintenanceSeconds, "number", "", 'required min="60" max="3600"')}${field("Expiração padrão do recurso (horas)", "defaultTunnelExpirationHours", c.defaultTunnelExpirationHours, "number", "Janela deslizante de inatividade.", 'required min="1" max="720"')}${field("Expiração mínima (horas)", "minTunnelExpirationHours", c.minTunnelExpirationHours, "number", "", 'required min="1" max="720"')}${field("Expiração máxima (horas)", "maxTunnelExpirationHours", c.maxTunnelExpirationHours, "number", "", 'required min="1" max="720"')}${field("Login Microsoft esperado (horas)", "microsoftExpectedAuthHours", c.microsoftExpectedAuthHours, "number", "Estimativa desde o login interativo.", 'required min="1" max="8760"')}${field("Login GitHub esperado (horas)", "githubExpectedAuthHours", c.githubExpectedAuthHours, "number", "Estimativa desde o login interativo.", 'required min="1" max="8760"')}${field("Avisar antes (horas)", "authWarningHours", c.authWarningHours, "number", "", 'required min="1" max="720"')}${field("Verificar login a cada (segundos)", "authCheckSeconds", c.authCheckSeconds, "number", "", 'required min="300" max="3600"')}${field("Portas permitidas", "allowedPorts", c.allowedPorts.join(","), "text", "Separadas por vírgula.", "required")}${field("Portas CONNECT", "connectPorts", c.connectPorts.join(","), "text", "", "required")}${area("Domínios permitidos", "allowedDomains", c.allowedDomains.join("\n"), "Um por linha. Um ponto inicial inclui subdomínios.")}${area("Tenants Microsoft permitidos no túnel", "allowedMicrosoftTenants", c.allowedMicrosoftTenants.join("\n"), "UUIDs, um por linha. Vazio permite qualquer tenant.")}<div class="field full check-grid">${check("Microsoft nos túneis", "microsoft", c.allowedProviders.includes("microsoft"))}${check("GitHub nos túneis", "github", c.allowedProviders.includes("github"))}</div><div class="field full">${check("Permitir todos os domínios (inclui IPs literais)", "allowAllDomains", c.allowAllDomains)}</div></div>${formEnd("Aplicar política")}</form>`,
   );
   dialog
     .querySelector(".form-grid")
@@ -1505,6 +1685,13 @@ function policyForm() {
       "socksPort",
       "maxSessions",
       "maintenanceSeconds",
+      "defaultTunnelExpirationHours",
+      "minTunnelExpirationHours",
+      "maxTunnelExpirationHours",
+      "microsoftExpectedAuthHours",
+      "githubExpectedAuthHours",
+      "authWarningHours",
+      "authCheckSeconds",
     ])
       policy[k] = Number(data.get(k));
     for (const k of ["allowedPorts", "connectPorts"])
@@ -1565,6 +1752,7 @@ const clickHandlers = {
   refresh: () => refresh(true),
   create: newSession,
   detail: (button) => detail(button.dataset.detail),
+  validity: (button) => validityForm(button.dataset.validity),
   action: runSessionAction,
   device: (button) =>
     device(overview.jobs.find((job) => job.id === button.dataset.device)),
@@ -1591,6 +1779,9 @@ document.addEventListener("click", async (event) => {
   }
 });
 setInterval(() => {
+  // Countdowns are presentation-only. Re-rendering the table does not perform
+  // requests or change session state, and keeps the warning window current.
+  if (me && view === "sessions" && !document.hidden) renderSessions();
   if (
     me &&
     !document.hidden &&

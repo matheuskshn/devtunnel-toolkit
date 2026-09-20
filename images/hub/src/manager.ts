@@ -22,6 +22,7 @@ import { createInterface } from "node:readline";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   check,
+  createSessionId,
   DEFAULT_PROXY_PORT,
   errorCode,
   HubError,
@@ -62,6 +63,7 @@ export class Manager {
   private readonly retries = new Map<string, NodeJS.Timeout>();
   private readonly failures = new Map<string, number>();
   private readonly maintenance = new Map<string, number>();
+  private authCheckTimer?: NodeJS.Timeout;
   private configQueue: Promise<void> = Promise.resolve();
   private readonly operations = new Set<Promise<unknown>>();
   private readonly clients = new Set<Socket>();
@@ -87,6 +89,10 @@ export class Manager {
       time: new Date().toISOString(),
       event,
       session_id: session?.id,
+      tunnel_id: session?.tunnel_id,
+      auth_expected_reauth_at: session?.auth_expected_reauth_at,
+      host_token_expires_at: session?.host_token_expires_at,
+      tunnel_expires_at: session?.tunnel_expires_at,
       code,
     };
     this.web?.record(record);
@@ -182,6 +188,7 @@ export class Manager {
     });
     await this.web?.open();
     this.log("manager_ready");
+    this.scheduleAuthChecks();
     for (const s of this.store.state.sessions.filter(
       (s) => s.desired && s.status !== "removed",
     )) {
@@ -221,6 +228,16 @@ export class Manager {
     const next = parseConfig({ ...this.config, ...value }),
       previous = { ...this.config };
     check(
+      this.store.state.sessions
+        .filter((s) => s.status !== "removed")
+        .every(
+          (s) =>
+            s.tunnel_expiration_hours! >= next.minTunnelExpirationHours &&
+            s.tunnel_expiration_hours! <= next.maxTunnelExpirationHours,
+        ),
+      "SESSION_EXPIRATION_OUTSIDE_POLICY",
+    );
+    check(
       next.proxyPort !== this.webPort && next.socksPort !== this.webPort,
       "WEB_PORT_COLLISION",
     );
@@ -242,10 +259,12 @@ export class Manager {
       await Promise.all([...this.runtimes.values()].map((r) => r.close()));
       this.runtimes.clear();
       Object.assign(this.config, next);
+      this.scheduleAuthChecks();
       await this.configureSquid();
       await persist();
     } catch (e) {
       Object.assign(this.config, previous);
+      this.scheduleAuthChecks();
       try {
         await this.configureSquid();
       } catch {
@@ -357,7 +376,13 @@ export class Manager {
       // create is explicit and named, never silently adopt another account's tunnel.
       // CLI create accepts a name, not a name.cluster for a deleted resource.
       const created = parseJson(
-        await runtime.cli(["create", name, "--expiration", "2d", "--json"]),
+        await runtime.cli([
+          "create",
+          name,
+          "--expiration",
+          `${s.tunnel_expiration_hours}h`,
+          "--json",
+        ]),
       );
       const id = canonicalTunnel(created);
       check(id.split(".")[0] === s.tunnel_name, "TUNNEL_NAME_CHANGED");
@@ -462,7 +487,10 @@ export class Manager {
     if (this.config.socksEnabled) this.store.ensureSocksListener(s);
     await this.store.save();
     await this.provision(s, runtime);
+    const previousHostExpiration = s.host_token_expires_at;
     await runtime.credentials();
+    if (s.host_token_expires_at !== previousHostExpiration)
+      this.log("session_host_token_refreshed", s);
     await this.configureSquid();
     s.desired = true;
     s.status = "starting";
@@ -519,19 +547,31 @@ export class Manager {
   ): Promise<void> {
     if (this.workers.get(s.id) !== worker) return;
     try {
+      const previousHostExpiration = s.host_token_expires_at;
       const tunnel = await runtime.credentials();
+      if (s.host_token_expires_at !== previousHostExpiration)
+        this.log("session_host_token_refreshed", s);
       if (this.workers.get(s.id) !== worker) return;
       // Resource lease maintenance is distinct from refreshing cached credentials.
-      if (Date.now() - (this.maintenance.get(s.id) ?? 0) > 12 * 3600000) {
+      const renewalInterval = Math.min(
+        12 * 3600000,
+        s.tunnel_expiration_hours! * 1800000,
+      );
+      if (Date.now() - (this.maintenance.get(s.id) ?? 0) > renewalInterval) {
         await runtime.cli([
           "update",
           s.tunnel_id!,
           "--expiration",
-          "2d",
+          `${s.tunnel_expiration_hours}h`,
           "--json",
         ]);
-        this.maintenance.set(s.id, Date.now());
+        const renewed = Date.now();
+        this.maintenance.set(s.id, renewed);
+        s.tunnel_last_renewed_at = new Date(renewed).toISOString();
+        await runtime.details();
+        this.log("session_resource_renewed", s);
       }
+      await this.store.save();
       if (worker.connected)
         worker.send({ type: "credentials", id, tunnel }, () => {});
     } catch (e) {
@@ -545,7 +585,9 @@ export class Manager {
     if (this.stopping) return;
     const code = errorCode(e);
     await this.stopWorker(s);
-    s.status = code === "AUTH_REQUIRED" ? "reauth_required" : "error";
+    s.status = ["AUTH_REQUIRED", "LOGIN_TOKEN_EXPIRED"].includes(code)
+      ? "reauth_required"
+      : "error";
     s.error = code;
     this.log("session_failed", s, code);
     await this.store.save();
@@ -585,6 +627,182 @@ export class Manager {
     this.workers.delete(s.id);
     await terminate(worker);
   }
+  private async authenticateSession(
+    s: Session,
+    output: (chunk: string) => void,
+    force: boolean,
+  ): Promise<void> {
+    s.desired = false;
+    await this.stopWorker(s);
+    if (force) {
+      const previous = await this.runtime(s);
+      try {
+        await previous.cli(["user", "logout"]);
+      } catch (e) {
+        // Reauthentication must also recover a cache whose login already expired.
+        if (
+          !(e instanceof HubError) ||
+          !["AUTH_REQUIRED", "LOGIN_TOKEN_EXPIRED"].includes(e.code)
+        )
+          throw e;
+      }
+      await previous.close();
+      this.runtimes.delete(s.id);
+      s.status = "reauth_required";
+      delete s.error;
+      this.clearCredentialValidity(s);
+      await this.store.save();
+    }
+    const runtime = await this.runtime(s);
+    await runtime.login(output);
+    this.store.resolveName(s);
+    s.status = "ready";
+    delete s.error;
+    await this.store.save();
+    this.log("session_authenticated", s);
+    await this.configureSquid();
+  }
+  private validityOptions(flags: string[]): Map<string, number> {
+    check(flags.length % 2 === 0, "USAGE");
+    const options = new Map<string, number>();
+    for (let index = 0; index < flags.length; index += 2) {
+      const key = flags[index];
+      check(
+        [
+          "--expiration-hours",
+          "--expected-auth-hours",
+          "--auth-warning-hours",
+        ].includes(key) &&
+          !options.has(key) &&
+          /^\d+$/.test(flags[index + 1]),
+        "USAGE",
+      );
+      options.set(key, Number(flags[index + 1]));
+    }
+    return options;
+  }
+  private applyValidityOptions(
+    s: Session,
+    options: Map<string, number>,
+  ): void {
+    const expiration =
+      options.get("--expiration-hours") ?? s.tunnel_expiration_hours!;
+    const expected =
+      options.get("--expected-auth-hours") ?? s.auth_expected_hours!;
+    const warning =
+      options.get("--auth-warning-hours") ?? s.auth_warning_hours!;
+    check(
+      Number.isInteger(expiration) &&
+        expiration >= this.config.minTunnelExpirationHours &&
+        expiration <= this.config.maxTunnelExpirationHours,
+      "INVALID_TUNNEL_EXPIRATION",
+    );
+    check(
+      Number.isInteger(expected) && expected >= 1 && expected <= 8760,
+      "INVALID_AUTH_VALIDITY",
+    );
+    check(
+      Number.isInteger(warning) && warning >= 1 && warning <= expected,
+      "INVALID_AUTH_WARNING",
+    );
+    s.tunnel_expiration_hours = expiration;
+    s.auth_expected_hours = expected;
+    s.auth_warning_hours = warning;
+    if (s.authenticated_at) {
+      s.auth_expected_reauth_at = new Date(
+        Date.parse(s.authenticated_at) + expected * 3600000,
+      ).toISOString();
+    }
+  }
+  private async configureSession(
+    s: Session,
+    options: Map<string, number>,
+  ): Promise<void> {
+    const previous = {
+      tunnel_expiration_hours: s.tunnel_expiration_hours,
+      auth_expected_hours: s.auth_expected_hours,
+      auth_warning_hours: s.auth_warning_hours,
+      auth_expected_reauth_at: s.auth_expected_reauth_at,
+    };
+    const previousExpiration = s.tunnel_expiration_hours;
+    let remoteUpdated = false;
+    this.applyValidityOptions(s, options);
+    try {
+      if (
+        s.tunnel_id &&
+        s.tunnel_expiration_hours !== previousExpiration
+      ) {
+        const runtime = await this.runtime(s);
+        await runtime.identity();
+        await runtime.cli([
+          "update",
+          s.tunnel_id,
+          "--expiration",
+          `${s.tunnel_expiration_hours}h`,
+          "--json",
+        ]);
+        remoteUpdated = true;
+        const renewed = new Date().toISOString();
+        s.tunnel_last_renewed_at = renewed;
+        this.maintenance.set(s.id, Date.parse(renewed));
+        await runtime.details();
+        this.log("session_resource_renewed", s);
+      }
+      await this.store.save();
+      this.log("session_configuration_updated", s);
+    } catch (e) {
+      if (!remoteUpdated) Object.assign(s, previous);
+      else await this.store.save().catch(() => {});
+      throw e;
+    }
+  }
+  private clearCredentialValidity(s: Session): void {
+    delete s.authenticated_at;
+    delete s.auth_last_verified_at;
+    delete s.auth_expected_reauth_at;
+    delete s.host_token_issued_at;
+    delete s.host_token_expires_at;
+  }
+  private scheduleAuthChecks(): void {
+    if (this.authCheckTimer) clearInterval(this.authCheckTimer);
+    if (this.stopping) return;
+    this.authCheckTimer = setInterval(() => {
+      for (const s of this.store.state.sessions.filter(
+        (candidate) =>
+          candidate.desired &&
+          candidate.status === "running" &&
+          !this.busy.has(candidate.id),
+      )) {
+        this.track(
+          this.exclusive(s.id, async () => {
+            try {
+              const runtime = await this.runtime(s);
+              await runtime.identity();
+              await this.store.save();
+              this.log("session_auth_verified", s);
+            } catch (e) {
+              const code = errorCode(e);
+              if (
+                [
+                  "AUTH_REQUIRED",
+                  "LOGIN_TOKEN_EXPIRED",
+                  "IDENTITY_CHANGED",
+                  "IDENTITY_PROVIDER_MISMATCH",
+                  "IDENTITY_TENANT_NOT_ALLOWED",
+                  "IDENTITY_SCHEMA_UNSUPPORTED",
+                ].includes(code)
+              ) {
+                await this.fail(s, e);
+              } else {
+                this.log("session_auth_check_failed", s, code);
+              }
+            }
+          }),
+        );
+      }
+    }, this.config.authCheckSeconds * 1000);
+    this.authCheckTimer.unref();
+  }
   async dispatch(
     args: string[],
     output: (chunk: string) => void,
@@ -609,7 +827,9 @@ export class Manager {
       return { token, expiresInSeconds: 600 };
     }
     check(args[0] === "session", "USAGE");
-    const [, operation, id, ...flags] = args;
+    const [, operation, ...parameters] = args;
+    let id = parameters.shift() ?? "";
+    let flags = parameters;
     if (operation === "list") {
       check(args.length === 2, "USAGE");
       return this.store.state.sessions.filter((s) => s.status !== "removed");
@@ -618,13 +838,23 @@ export class Manager {
       check(args.length === 3, "USAGE");
       return this.store.get(id);
     }
+    if (operation === "add" && (!id || id.startsWith("--"))) {
+      if (id) flags = [id, ...flags];
+      id = createSessionId();
+    }
     return this.exclusive(id, async () => {
       if (operation === "add") {
         check(flags.length % 2 === 0, "USAGE");
         const options = new Map<string, string>();
         for (let i = 0; i < flags.length; i += 2) {
           check(
-            ["--provider", "--tunnel-name"].includes(flags[i]) &&
+            [
+              "--provider",
+              "--tunnel-name",
+              "--expiration-hours",
+              "--expected-auth-hours",
+              "--auth-warning-hours",
+            ].includes(flags[i]) &&
               !options.has(flags[i]),
             "USAGE",
           );
@@ -635,16 +865,49 @@ export class Manager {
           (options.get("--provider") ?? "microsoft") as Provider,
           options.get("--tunnel-name"),
         );
+        this.applyValidityOptions(
+          s,
+          this.validityOptions(
+            [...options.entries()]
+              .filter(([key]) =>
+                [
+                  "--expiration-hours",
+                  "--expected-auth-hours",
+                  "--auth-warning-hours",
+                ].includes(key),
+              )
+              .flatMap(([key, value]) => [key, value]),
+          ),
+        );
         await this.store.save();
+        return s;
+      }
+      if (operation === "configure") {
+        const s = this.store.get(id);
+        await this.configureSession(s, this.validityOptions(flags));
         return s;
       }
       check(
         flags.length === 0 &&
-          ["login", "start", "stop", "logout", "remove"].includes(operation),
+          [
+            "connect",
+            "reconnect",
+            "login",
+            "start",
+            "stop",
+            "logout",
+            "remove",
+          ].includes(operation),
         "USAGE",
       );
       const s = this.store.get(id);
       try {
+        if (operation === "connect" || operation === "reconnect") {
+          await this.authenticateSession(s, output, operation === "reconnect");
+          await this.start(s);
+          this.log(`session_${operation}`, s);
+          return s;
+        }
         if (operation === "start") {
           await this.start(s);
           return s;
@@ -654,22 +917,23 @@ export class Manager {
           await this.stopWorker(s);
           s.status = s.identity ? "stopped" : "login_required";
         } else if (operation === "login") {
-          s.desired = false;
-          await this.stopWorker(s);
-          const runtime = await this.runtime(s);
-          await runtime.login(output);
-          this.store.resolveName(s);
-          s.status = "ready";
-          delete s.error;
-          await this.store.save();
-          await this.configureSquid();
+          await this.authenticateSession(s, output, false);
         } else if (operation === "logout" || operation === "remove") {
           s.desired = false;
           await this.stopWorker(s);
           const runtime = await this.runtime(s);
-          await runtime.cli(["user", "logout"]);
+          try {
+            await runtime.cli(["user", "logout"]);
+          } catch (e) {
+            if (
+              !(e instanceof HubError) ||
+              !["AUTH_REQUIRED", "LOGIN_TOKEN_EXPIRED"].includes(e.code)
+            )
+              throw e;
+          }
           await runtime.close();
           this.runtimes.delete(s.id);
+          this.clearCredentialValidity(s);
           s.status = operation === "remove" ? "removed" : "login_required";
           // Keep immutable identity and home. Logout clears CLI credentials; removal
           // tombstones the session. Purging backups/remote resources is admin work.
@@ -734,6 +998,7 @@ export class Manager {
     this.health?.close();
     for (const client of this.clients) client.destroy();
     for (const timer of this.retries.values()) clearTimeout(timer);
+    if (this.authCheckTimer) clearInterval(this.authCheckTimer);
     for (const runtime of this.runtimes.values()) runtime.abort.abort();
     await Promise.all([...this.workers.values()].map((w) => terminate(w)));
     this.workers.clear();

@@ -5,6 +5,7 @@ import type { Tunnel } from "@microsoft/dev-tunnels-contracts";
 import {
   TunnelManagementHttpClient,
   ManagementApiVersions,
+  TunnelAccessTokenProperties,
 } from "@microsoft/dev-tunnels-management";
 import { CancellationTokenSource } from "@microsoft/dev-tunnels-ssh";
 import {
@@ -60,7 +61,12 @@ export function parseIdentity(
   value: Record<string, any>,
   expected: Provider,
 ): Identity {
-  check(value.status !== "Not logged in", "AUTH_REQUIRED");
+  const status =
+    typeof value.status === "string" ? value.status.trim().toLowerCase() : "";
+  if (/^(?:login token|token|login) expired[.!]?$/.test(status)) {
+    throw new HubError("LOGIN_TOKEN_EXPIRED");
+  }
+  check(status !== "not logged in", "AUTH_REQUIRED");
   const user = value.user ?? value;
   const provider = String(user.provider ?? value.provider ?? "").toLowerCase();
   check(
@@ -275,6 +281,7 @@ export class SessionRuntime {
           this.allowedTenants.includes(identity.tenant_id)),
       "IDENTITY_TENANT_NOT_ALLOWED",
     );
+    this.session.auth_last_verified_at = new Date().toISOString();
     return identity;
   }
   async login(output: (chunk: string) => void): Promise<void> {
@@ -284,7 +291,22 @@ export class SessionRuntime {
       bindIdentity(this.session, await this.identity());
       return;
     } catch (e) {
-      if (!(e instanceof HubError) || e.code !== "AUTH_REQUIRED") throw e;
+      if (
+        !(e instanceof HubError) ||
+        !["AUTH_REQUIRED", "LOGIN_TOKEN_EXPIRED"].includes(e.code)
+      )
+        throw e;
+      // The CLI may keep an expired MSAL entry that prevents a fresh device flow.
+      // Clear only this session's isolated keyring before requesting a new login.
+      try {
+        await this.cli(["user", "logout"]);
+      } catch (logoutError) {
+        if (
+          !(logoutError instanceof HubError) ||
+          !["AUTH_REQUIRED", "LOGIN_TOKEN_EXPIRED"].includes(logoutError.code)
+        )
+          throw logoutError;
+      }
     }
     await this.cli(
       [
@@ -302,10 +324,25 @@ export class SessionRuntime {
       await this.cli(["user", "logout"]);
       throw e;
     }
+    const authenticated = new Date();
+    this.session.authenticated_at = authenticated.toISOString();
+    this.session.auth_expected_reauth_at = new Date(
+      authenticated.getTime() + this.session.auth_expected_hours! * 3600000,
+    ).toISOString();
   }
   async credentials(): Promise<Tunnel> {
     bindIdentity(this.session, await this.identity());
     const details = await this.details();
+    const token = details.accessTokens?.host;
+    if (token) {
+      const properties = TunnelAccessTokenProperties.tryParse(token);
+      this.session.host_token_issued_at = new Date().toISOString();
+      if (properties?.expiration) {
+        this.session.host_token_expires_at = properties.expiration.toISOString();
+      } else {
+        delete this.session.host_token_expires_at;
+      }
+    }
     return {
       ...privateTunnel(details, this.session),
       accessTokens: details.accessTokens,
@@ -348,6 +385,24 @@ export class SessionRuntime {
         cancellation.token,
       );
       check(tunnel, "TUNNEL_NOT_FOUND");
+      const expiration = tunnel.expiration;
+      const expirationDate =
+        expiration instanceof Date
+          ? expiration
+          : typeof expiration === "string"
+            ? new Date(expiration)
+            : undefined;
+      if (expirationDate && Number.isFinite(expirationDate.getTime())) {
+        this.session.tunnel_expires_at = expirationDate.toISOString();
+      } else {
+        delete this.session.tunnel_expires_at;
+      }
+      if (Number.isInteger(tunnel.customExpiration)) {
+        this.session.tunnel_custom_expiration_seconds = tunnel.customExpiration;
+      } else {
+        delete this.session.tunnel_custom_expiration_seconds;
+      }
+      this.session.tunnel_last_verified_at = new Date().toISOString();
       return { ...tunnel, accessTokens: { host: token } };
     } catch (e) {
       if (e instanceof HubError) throw e;

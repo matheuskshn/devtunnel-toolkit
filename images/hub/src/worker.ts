@@ -36,7 +36,7 @@ process.on('message', async (message: any) => {
   if (message.type === 'credentials') {
     const entry = requests.get(message.id); if (!entry) return;
     requests.delete(message.id); clearTimeout(entry.timer);
-    if (message.error) { entry.reject(new Error('CREDENTIAL_FAILED')); await stop(message.error === 'AUTH_REQUIRED' ? 75 : 1); }
+    if (message.error) { entry.reject(new Error('CREDENTIAL_FAILED')); await stop(['AUTH_REQUIRED','LOGIN_TOKEN_EXPIRED'].includes(message.error) ? 75 : 1); }
     else entry.resolve(message.tunnel);
     return;
   }

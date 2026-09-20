@@ -158,6 +158,8 @@ export async function command(
         return reject(new HubError("COMMAND_CANCELLED_OR_TIMEOUT"));
       if (code === 0) return resolve(stdout);
       // Classify without returning the raw message, arguments or credentials.
+      if (/login token expired/i.test(stdout + stderr))
+        return reject(new HubError("LOGIN_TOKEN_EXPIRED"));
       if (
         /unauthorized|AADSTS|login.*expired|not logged in|sign.in required/i.test(
           stdout + stderr,

@@ -106,7 +106,21 @@ function validateSessionIdentity(session: Session): void {
     );
   }
 }
-function validateSession(session: Session): void {
+function validTimestamp(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (typeof value === "string" && Number.isFinite(Date.parse(value)))
+  );
+}
+function normalizeSession(session: Session, config: Config): void {
+  session.tunnel_expiration_hours ??= config.defaultTunnelExpirationHours;
+  session.auth_expected_hours ??=
+    session.provider === "microsoft"
+      ? config.microsoftExpectedAuthHours
+      : config.githubExpectedAuthHours;
+  session.auth_warning_hours ??= config.authWarningHours;
+}
+function validateSession(session: Session, config: Config): void {
   check(
     validId(session.id) && ["microsoft", "github"].includes(session.provider),
     "INVALID_STATE",
@@ -130,6 +144,35 @@ function validateSession(session: Session): void {
   );
 
   validateSessionIdentity(session);
+  check(
+    Number.isInteger(session.tunnel_expiration_hours) &&
+      session.tunnel_expiration_hours! >= config.minTunnelExpirationHours &&
+      session.tunnel_expiration_hours! <= config.maxTunnelExpirationHours &&
+      Number.isInteger(session.auth_expected_hours) &&
+      session.auth_expected_hours! >= 1 &&
+      session.auth_expected_hours! <= 8760 &&
+      Number.isInteger(session.auth_warning_hours) &&
+      session.auth_warning_hours! >= 1 &&
+      session.auth_warning_hours! <= session.auth_expected_hours!,
+    "INVALID_SESSION_VALIDITY_POLICY",
+  );
+  check(
+    [
+      session.authenticated_at,
+      session.auth_last_verified_at,
+      session.auth_expected_reauth_at,
+      session.host_token_issued_at,
+      session.host_token_expires_at,
+      session.tunnel_expires_at,
+      session.tunnel_last_verified_at,
+      session.tunnel_last_renewed_at,
+    ].every(validTimestamp) &&
+      (session.tunnel_custom_expiration_seconds === undefined ||
+        (Number.isInteger(session.tunnel_custom_expiration_seconds) &&
+          session.tunnel_custom_expiration_seconds >= 3600 &&
+          session.tunnel_custom_expiration_seconds <= 2592000)),
+    "INVALID_SESSION_VALIDITY_STATE",
+  );
 }
 class StateMappings {
   readonly ids = new Set<string>();
@@ -180,7 +223,7 @@ function validateState(s: State, config: Config): void {
   );
   const mappings = new StateMappings();
   for (const session of s.sessions) {
-    validateSession(session);
+    validateSession(session, config);
     mappings.reserve(session, config);
   }
   check(
@@ -203,6 +246,9 @@ export class StateStore {
   async load(): Promise<void> {
     await privateDirectory(this.directory);
     this.state = await this.readState();
+    for (const session of this.state.sessions) {
+      normalizeSession(session, this.config);
+    }
     validateState(this.state, this.config);
     await this.save();
   }
@@ -284,6 +330,12 @@ export class StateStore {
         ? { tunnel_name_template: this.config.tunnelNameTemplate }
         : { tunnel_name: name }),
       listener: this.state.next_listener++,
+      tunnel_expiration_hours: this.config.defaultTunnelExpirationHours,
+      auth_expected_hours:
+        provider === "microsoft"
+          ? this.config.microsoftExpectedAuthHours
+          : this.config.githubExpectedAuthHours,
+      auth_warning_hours: this.config.authWarningHours,
       desired: false,
       status: "login_required",
       created_at: new Date().toISOString(),

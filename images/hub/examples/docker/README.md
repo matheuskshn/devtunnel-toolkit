@@ -19,8 +19,9 @@ docker run -d --name devtunnel-hub \
   devtunnel-toolkit-hub:local
 
 docker exec devtunnel-hub hub session add user-a --provider microsoft --tunnel-name devhub-user-a
-docker exec -it devtunnel-hub hub session login user-a
-docker exec devtunnel-hub hub session start user-a
+docker exec -it devtunnel-hub hub session connect user-a
+docker exec devtunnel-hub hub session configure user-a --expiration-hours 72 --expected-auth-hours 24 --auth-warning-hours 2
+docker exec -it devtunnel-hub hub session reconnect user-a
 docker exec devtunnel-hub hub session status user-a
 ```
 
