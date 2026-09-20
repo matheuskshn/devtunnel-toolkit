@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-rc.8](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.7...v0.1.0-rc.8) (2026-09-20)
+
+
+### Bug Fixes
+
+* update base Dev Tunnel CLI checksum ([#33](https://github.com/matheuskshn/devtunnel-toolkit/issues/33)) ([12b86bf](https://github.com/matheuskshn/devtunnel-toolkit/commit/12b86bf602996df5b0f6144dde65b23a5e4ce673))
+
 ## [0.1.0-rc.7](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.6...v0.1.0-rc.7) (2026-09-20)
 
 
