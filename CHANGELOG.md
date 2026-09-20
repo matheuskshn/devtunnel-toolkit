@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-rc.7](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.6...v0.1.0-rc.7) (2026-09-20)
+
+
+### Features
+
+* **hub:** manage tunnel authentication validity ([#31](https://github.com/matheuskshn/devtunnel-toolkit/issues/31)) ([3a51a68](https://github.com/matheuskshn/devtunnel-toolkit/commit/3a51a6898d488b8a07e9d3a10bd27704bf4180f8))
+
 ## [0.1.0-rc.6](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.5...v0.1.0-rc.6) (2026-09-16)
 
 
