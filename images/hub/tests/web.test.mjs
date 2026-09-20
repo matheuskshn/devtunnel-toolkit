@@ -351,7 +351,7 @@ async function serverFixture(
     },
     dispatch: async (args, output) => {
       dispatches.push(args);
-      if (args[1] === "login") {
+      if (["login", "connect", "reconnect"].includes(args[1])) {
         output(
           "To sign in, use https://github.com/login/device and enter the code ABCD-1234. synthetic-private-token",
         );
@@ -780,6 +780,45 @@ test("HTTP console: unauthenticated/CSRF/Host denial, mandatory change, secrets,
       await operator.request("/api/jobs", {
         action: "start",
         session: "session-two",
+      })
+    ).status,
+    403,
+  );
+  const generated = await admin.request("/api/jobs", {
+    action: "add",
+    provider: "github",
+  });
+  assert.equal(generated.status, 202);
+  assert.match(generated.result.job.session, /^s-[a-f0-9]{30}$/);
+  assert.ok(
+    f.dispatches.some(
+      (args) =>
+        args[0] === "session" &&
+        args[1] === "add" &&
+        args[2] === generated.result.job.session,
+    ),
+  );
+  const configured = await admin.request("/api/jobs", {
+    action: "configure",
+    session: "session-one",
+    tunnelExpirationHours: 72,
+    authExpectedHours: 24,
+    authWarningHours: 2,
+  });
+  assert.equal(configured.status, 202);
+  assert.ok(
+    f.dispatches.some(
+      (args) =>
+        args.join(" ") ===
+        "session configure session-one --expiration-hours 72 --expected-auth-hours 24 --auth-warning-hours 2",
+    ),
+  );
+  assert.equal(
+    (
+      await operator.request("/api/jobs", {
+        action: "configure",
+        session: "session-one",
+        tunnelExpirationHours: 48,
       })
     ).status,
     403,

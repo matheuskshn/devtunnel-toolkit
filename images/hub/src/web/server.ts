@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   check,
+  createSessionId,
   DEFAULT_PROXY_PORT,
   errorCode,
   type Config,
@@ -94,6 +95,13 @@ const policyKeys = [
   "tunnelNameTemplate",
   "maxSessions",
   "maintenanceSeconds",
+  "defaultTunnelExpirationHours",
+  "minTunnelExpirationHours",
+  "maxTunnelExpirationHours",
+  "microsoftExpectedAuthHours",
+  "githubExpectedAuthHours",
+  "authWarningHours",
+  "authCheckSeconds",
 ];
 const providerKeys = [
   "id",
@@ -125,6 +133,15 @@ const string = (value: unknown, max = 120): string => {
 };
 const revision = (value: unknown): number => {
   check(Number.isSafeInteger(value) && Number(value) >= 0, "REVISION_REQUIRED");
+  return Number(value);
+};
+const integer = (value: unknown, minimum: number, maximum: number): number => {
+  check(
+    Number.isSafeInteger(value) &&
+      Number(value) >= minimum &&
+      Number(value) <= maximum,
+    "INVALID_FIELD",
+  );
   return Number(value);
 };
 const errorStatuses = new Map<string, number>([
@@ -257,6 +274,17 @@ export class WebConsole {
         .map((j) => this.safeJob(j, user)),
       revision: this.control.data.revision,
       providers: this.host.config.allowedProviders,
+      validityPolicy: {
+        defaultTunnelExpirationHours:
+          this.host.config.defaultTunnelExpirationHours,
+        minTunnelExpirationHours: this.host.config.minTunnelExpirationHours,
+        maxTunnelExpirationHours: this.host.config.maxTunnelExpirationHours,
+        microsoftExpectedAuthHours:
+          this.host.config.microsoftExpectedAuthHours,
+        githubExpectedAuthHours: this.host.config.githubExpectedAuthHours,
+        authWarningHours: this.host.config.authWarningHours,
+        authCheckSeconds: this.host.config.authCheckSeconds,
+      },
     };
   }
   private visibleRecord(user: User, r: Record<string, unknown>) {
@@ -953,16 +981,37 @@ export class WebConsole {
     user: User,
     input: Record<string, unknown>,
   ): Promise<void> {
-    fields(input, ["action", "session", "provider", "tunnelName"]);
+    fields(input, [
+      "action",
+      "session",
+      "provider",
+      "tunnelName",
+      "tunnelExpirationHours",
+      "authExpectedHours",
+      "authWarningHours",
+    ]);
     check(user.role !== "viewer", "FORBIDDEN");
-    const action = string(input.action),
-      id = string(input.session, 32);
+    const action = string(input.action);
+    const id =
+      action === "add" && input.session === undefined
+        ? createSessionId()
+        : string(input.session, 32);
     check(validId(id), "INVALID_SESSION_ID");
     check(
-      ["add", "login", "start", "stop", "logout", "remove"].includes(action),
+      [
+        "add",
+        "connect",
+        "reconnect",
+        "login",
+        "start",
+        "stop",
+        "logout",
+        "remove",
+        "configure",
+      ].includes(action),
       "INVALID_ACTION",
     );
-    if (action === "add" || action === "remove") {
+    if (["add", "remove", "configure"].includes(action)) {
       this.admin(user);
     } else {
       check(visible(user, id), "FORBIDDEN");
@@ -978,9 +1027,37 @@ export class WebConsole {
         check(validTunnelName(input.tunnelName), "INVALID_TUNNEL_NAME");
         args.push("--tunnel-name", input.tunnelName);
       }
-    } else {
+      for (const [field, flag, minimum, maximum] of [
+        ["tunnelExpirationHours", "--expiration-hours", 1, 720],
+        ["authExpectedHours", "--expected-auth-hours", 1, 8760],
+        ["authWarningHours", "--auth-warning-hours", 1, 720],
+      ] as const) {
+        if (input[field] !== undefined) {
+          args.push(flag, String(integer(input[field], minimum, maximum)));
+        }
+      }
+    } else if (action === "configure") {
       check(
         input.provider === undefined && input.tunnelName === undefined,
+        "UNKNOWN_FIELD",
+      );
+      for (const [field, flag, minimum, maximum] of [
+        ["tunnelExpirationHours", "--expiration-hours", 1, 720],
+        ["authExpectedHours", "--expected-auth-hours", 1, 8760],
+        ["authWarningHours", "--auth-warning-hours", 1, 720],
+      ] as const) {
+        if (input[field] !== undefined) {
+          args.push(flag, String(integer(input[field], minimum, maximum)));
+        }
+      }
+      check(args.length > 3, "INVALID_FIELD");
+    } else {
+      check(
+        input.provider === undefined &&
+          input.tunnelName === undefined &&
+          input.tunnelExpirationHours === undefined &&
+          input.authExpectedHours === undefined &&
+          input.authWarningHours === undefined,
         "UNKNOWN_FIELD",
       );
       this.host.sessions().find((s) => s.id === id && s.status !== "removed") ||
@@ -1006,7 +1083,12 @@ export class WebConsole {
       createdAt: new Date().toISOString(),
     };
     this.jobs.set(job.id, job);
-    this.audit("console_action_started", user, { action, session_id: id });
+    const currentTunnel = this.host.sessions().find((s) => s.id === id);
+    this.audit("console_action_started", user, {
+      action,
+      session_id: id,
+      tunnel_id: currentTunnel?.tunnel_id,
+    });
     let output = "";
     const task = this.host
       .dispatch(args, (chunk) => {
@@ -1037,9 +1119,11 @@ export class WebConsole {
         output = "";
         delete job.device;
         job.finishedAt = new Date().toISOString();
+        const resultingTunnel = this.host.sessions().find((s) => s.id === id);
         this.audit("console_action_finished", user, {
           action,
           session_id: id,
+          tunnel_id: resultingTunnel?.tunnel_id,
           status: job.status,
           code: job.error,
         });

@@ -18,6 +18,13 @@ const fields = {
   HUB_ALLOWED_MICROSOFT_TENANTS: ["allowedMicrosoftTenants", "list"],
   HUB_HEALTH_PORT: ["healthPort", "number"],
   HUB_MAINTENANCE_SECONDS: ["maintenanceSeconds", "number"],
+  HUB_DEFAULT_TUNNEL_EXPIRATION_HOURS: ["defaultTunnelExpirationHours", "number"],
+  HUB_MIN_TUNNEL_EXPIRATION_HOURS: ["minTunnelExpirationHours", "number"],
+  HUB_MAX_TUNNEL_EXPIRATION_HOURS: ["maxTunnelExpirationHours", "number"],
+  HUB_MICROSOFT_EXPECTED_AUTH_HOURS: ["microsoftExpectedAuthHours", "number"],
+  HUB_GITHUB_EXPECTED_AUTH_HOURS: ["githubExpectedAuthHours", "number"],
+  HUB_AUTH_WARNING_HOURS: ["authWarningHours", "number"],
+  HUB_AUTH_CHECK_SECONDS: ["authCheckSeconds", "number"],
 } as const;
 
 async function readConfigFile(selected?: string): Promise<Config> {

@@ -50,7 +50,9 @@ test('all policy environment fields use the same validated configuration schema'
   assert.deepEqual(config, {hubId:'test-hub',tunnelNameTemplate:'{hub_id}-{username}',listenerStart:19001,listenerEnd:19999,maxSessions:10,
     allowedDomains:['service.example.com'],allowAllDomains:false,allowedPorts:[80,443,22],connectPorts:[443,22],
     allowedProviders:['microsoft'],allowedMicrosoftTenants:['00000000-0000-0000-0000-000000000000'],
-    healthPort:8081,proxyPort:3210,socksPort:3180,socksEnabled:false,maintenanceSeconds:120});
+    healthPort:8081,proxyPort:3210,socksPort:3180,socksEnabled:false,maintenanceSeconds:120,
+    defaultTunnelExpirationHours:48,minTunnelExpirationHours:1,maxTunnelExpirationHours:720,
+    microsoftExpectedAuthHours:24,githubExpectedAuthHours:720,authWarningHours:2,authCheckSeconds:900});
 });
 test('all-domain access requires an explicit boolean and supports environment override',async t=>{
   const file=await fixture(t,'{"allowAllDomains":true}');
@@ -69,6 +71,7 @@ test('empty list overrides clear lists; empty required lists and malformed value
     {HUB_ALLOWED_PORTS:''},{HUB_CONNECT_PORTS:'22'},{HUB_ALLOWED_DOMAINS:'*'},
     {HUB_ALLOWED_DOMAINS:'a.example.com,,b.example.com'},{HUB_ALLOWED_DOMAINS:'secret\nvalue'},
     {HUB_ALLOWED_PROVIDERS:''},{HUB_ALLOWED_PROVIDERS:'unknown'},{HUB_ALLOWED_MICROSOFT_TENANTS:'secret-value'},
+    {HUB_MICROSOFT_EXPECTED_AUTH_HOURS:'1',HUB_AUTH_WARNING_HOURS:'2'},
   ]) await assert.rejects(loadConfig(file,env), e => /^INVALID_/.test(e.message) && !e.message.includes('secret'));
 });
 test('explicit missing paths and malformed files fail even with environment overrides', async t => {

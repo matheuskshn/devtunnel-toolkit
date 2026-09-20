@@ -856,6 +856,20 @@ textarea {
   gap: 12px;
   flex-wrap: wrap;
 }
+.advanced-actions {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.advanced-actions summary {
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+.advanced-actions .check-grid {
+  margin-top: 12px;
+}
 .form-actions {
   display: flex;
   justify-content: flex-end;

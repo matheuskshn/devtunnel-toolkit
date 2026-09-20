@@ -72,8 +72,9 @@ if (args[0] === 'serve') {
   socket.on('close', () => { if (!response) process.exitCode = 1; });
 } else {
   process.stdout.write('Usage: hub serve | health | session list\n' +
-    '       hub session add ID [--provider microsoft|github] [--tunnel-name NAME]\n' +
-    '       hub session login|start|stop|status|logout|remove ID\n' +
+    '       hub session add [ID] [--provider microsoft|github] [--tunnel-name NAME] [--expiration-hours N] [--expected-auth-hours N] [--auth-warning-hours N]\n' +
+    '       hub session configure ID [--expiration-hours N] [--expected-auth-hours N] [--auth-warning-hours N]\n' +
+    '       hub session connect|reconnect|login|start|stop|status|logout|remove ID\n' +
     '       hub admin reset-password USERNAME --password-stdin\n' +
     '       hub setup token | status\n');
   if (args.length && !['help','--help','-h'].includes(args[0])) process.exitCode = 1;

@@ -34,7 +34,7 @@ RUN sh /build-tools/build-native-libraries package
 
 FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d
 ARG TARGETARCH
-ARG DEVTUNNEL_VERSION=1.0.2030
+ARG DEVTUNNEL_VERSION=1.0.2094
 ARG DEVTUNNEL_SHA256
 # Keep private session buses and keyrings, without a systemd/PAM login stack.
 # ICU is supplied by this distribution, not copied from the Debian build stage.
@@ -51,8 +51,8 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
     && mkdir -p /data /config /run/hub /opt/hub \
     && chown hub:hub /data /run/hub
 RUN case "${TARGETARCH}" in \
-      amd64) hub_arch=x64; hub_checksum=ff6911548907b5abaea4ed5baa36b2420be7c5debcb637a4f50f7a4002b10b60 ;; \
-      arm64) hub_arch=arm64; hub_checksum=f7a76e0117a3e8d5bfbf9416e3480cdac36c2b4bb10d2683f0780dc9284b642f ;; \
+      amd64) hub_arch=x64; hub_checksum=2aa6c41aaf7840427e84b7e1e99be5b826a9966fc027ddf61dc0f69b68db060b ;; \
+      arm64) hub_arch=arm64; hub_checksum=efac378f9ffb40914935fbd2361543088b50cd62248372df06c243e6f7c49cc8 ;; \
       *) exit 1 ;; esac \
     && curl --silent --show-error --fail --location \
        --retry 3 --connect-timeout 15 --max-time 180 --proto '=https' --tlsv1.2 \
