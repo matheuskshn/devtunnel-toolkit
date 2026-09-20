@@ -28,7 +28,7 @@ FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f
 
 ARG TARGETARCH
 ARG DEVTUNNEL_ENV=prod
-ARG DEVTUNNEL_VERSION=1.0.2030
+ARG DEVTUNNEL_VERSION=1.0.2094
 ARG DEVTUNNEL_SHA256
 
 LABEL org.opencontainers.image.title="devtunnel-toolkit" \
@@ -52,8 +52,8 @@ RUN apt-get update \
 
 RUN set -eux; \
     case "${TARGETARCH:-amd64}" in \
-        amd64) devtunnel_arch="x64"; devtunnel_checksum=ff6911548907b5abaea4ed5baa36b2420be7c5debcb637a4f50f7a4002b10b60 ;; \
-        arm64) devtunnel_arch="arm64"; devtunnel_checksum=f7a76e0117a3e8d5bfbf9416e3480cdac36c2b4bb10d2683f0780dc9284b642f ;; \
+        amd64) devtunnel_arch="x64"; devtunnel_checksum=2aa6c41aaf7840427e84b7e1e99be5b826a9966fc027ddf61dc0f69b68db060b ;; \
+        arm64) devtunnel_arch="arm64"; devtunnel_checksum=efac378f9ffb40914935fbd2361543088b50cd62248372df06c243e6f7c49cc8 ;; \
         *) echo "Unsupported TARGETARCH: ${TARGETARCH:-unknown}" >&2; exit 1 ;; \
     esac; \
     test "$DEVTUNNEL_ENV" = prod || test -n "$DEVTUNNEL_SHA256"; \
