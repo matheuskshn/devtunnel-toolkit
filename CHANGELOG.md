@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0-rc.9](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.8...v0.1.0-rc.9) (2026-09-21)
+
+
+### Features
+
+* **hub:** coordinate revision leadership handoff ([#35](https://github.com/matheuskshn/devtunnel-toolkit/issues/35)) ([9f2bdec](https://github.com/matheuskshn/devtunnel-toolkit/commit/9f2bdecfa1ec7b98e88f4239bfd16c84f40c1d0a))
+
 ## [0.1.0-rc.8](https://github.com/matheuskshn/devtunnel-toolkit/compare/v0.1.0-rc.7...v0.1.0-rc.8) (2026-09-20)
 
 
