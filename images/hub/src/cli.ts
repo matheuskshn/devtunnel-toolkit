@@ -2,9 +2,12 @@ import { createConnection } from 'node:net';
 import { createInterface } from 'node:readline';
 import { Manager } from './manager.js';
 import { loadConfig } from './config.js';
-import { errorCode, check } from './model.js';
+import { errorCode, check, parseConfig } from './model.js';
 import {PostgresPersistence, postgresConfig} from './postgres.js';
 import { resolveRuntimeEnvironment } from './environment.js';
+import { validateState } from './state.js';
+import { decodeControlData } from './web/control.js';
+import { validateWebPort, webOptions } from './web/security.js';
 
 process.umask(0o077);
 const args = process.argv.slice(2);
@@ -15,6 +18,7 @@ if (args[0] === 'serve') {
   let manager: Manager | undefined;
   let postgres: PostgresPersistence | undefined;
   let closing = false;
+  let managerOpening = false;
   const shutdown = (failed = false) => {
     if (closing) { return; }
     closing = true;
@@ -30,16 +34,34 @@ if (args[0] === 'serve') {
     const config = await loadConfig(undefined, environment), backend = environment.HUB_STORAGE_BACKEND ?? 'filesystem';
     check(['filesystem','postgres'].includes(backend), 'INVALID_STORAGE_BACKEND');
     if (backend === 'postgres') {
-      postgres = new PostgresPersistence(await postgresConfig(environment), config.hubId, environment, () => { if (manager) shutdown(true); });
+      const web = webOptions(environment);
+      if (web) validateWebPort(web, config);
+      postgres = new PostgresPersistence(await postgresConfig(environment), config.hubId, environment, {
+        onLost: () => { if (manager) shutdown(true); },
+        onTakeover: () => shutdown(),
+        onLeadershipState: event => process.stdout.write(`${JSON.stringify({time:new Date().toISOString(),event})}\n`),
+        preflight: state => {
+          if (!state) return;
+          validateState(state, config);
+          if (web && state.console) {
+            const control = decodeControlData(state.console, config.hubId, web.key);
+            const effective = control.policy ? parseConfig({...config,...control.policy}) : config;
+            validateWebPort(web, effective);
+          }
+        },
+      });
       await postgres.open(runDir);
     }
     manager = new Manager(config, postgres?.directory ?? dataDir, runDir, postgres, environment, process.env, backend);
     process.on('SIGTERM', () => shutdown()); process.on('SIGINT', () => shutdown());
+    managerOpening = true;
     await manager.open();
+    managerOpening = false;
   } catch (e) {
     process.stderr.write(`${errorCode(e)}\n`);
+    if (managerOpening) await postgres?.markFailed().catch(() => {});
     await manager?.close().catch(() => {}); await postgres?.close().catch(() => {});
-    process.exitCode = errorCode(e) === 'HUB_ALREADY_ACTIVE' ? 75 : 1;
+    process.exitCode = ['HUB_ALREADY_ACTIVE','DEPLOYMENT_SUPERSEDED','LEADERSHIP_TIMEOUT','DEPLOYMENT_PREVIOUSLY_FAILED'].includes(errorCode(e)) ? 75 : 1;
   }
 } else if (args[0] === 'health') {
   try {

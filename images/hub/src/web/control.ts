@@ -120,6 +120,45 @@ export function publicProvider(provider: AuthProvider) {
     bindPasswordConfigured: !!bindPassword,
   };
 }
+
+export function decodeControlData(
+  encrypted: string,
+  hubId: string,
+  key: string,
+): ControlData {
+  const plain = unseal(
+    Buffer.from(encrypted, "base64"),
+    `${hubId}:console:v1`,
+    credentialKeys({ HUB_CREDENTIAL_KEY: key }),
+  );
+  try {
+    let data: ControlData;
+    try {
+      data = JSON.parse(plain.toString()) as ControlData;
+    } catch {
+      throw new HubError("INVALID_CONSOLE_STATE");
+    }
+    check(
+      data.version === 1 &&
+        Array.isArray(data.users) &&
+        Array.isArray(data.providers),
+      "INVALID_CONSOLE_STATE",
+    );
+    check(
+      data.users.some(
+        (u) =>
+          u.id === "admin" && u.local && u.role === "admin" && !u.disabled,
+      ),
+      "RECOVERY_ADMIN_MISSING",
+    );
+    if (data.infrastructure) {
+      data.infrastructure = updateInfrastructureProfile({}, data.infrastructure);
+    }
+    return data;
+  } finally {
+    plain.fill(0);
+  }
+}
 export function visible(user: User, sessionId: string): boolean {
   return user.role === "admin" || user.sessions.includes(sessionId);
 }
@@ -237,35 +276,11 @@ export class ControlStore {
   }
   async load(): Promise<void> {
     if (this.store.state.console) {
-      const plain = unseal(
-        Buffer.from(this.store.state.console, "base64"),
-        `${this.store.config.hubId}:console:v1`,
-        this.keys,
+      this.data = decodeControlData(
+        this.store.state.console,
+        this.store.config.hubId,
+        this.keys.keys[this.keys.active].toString("base64"),
       );
-      try {
-        this.data = JSON.parse(plain.toString());
-      } finally {
-        plain.fill(0);
-      }
-      check(
-        this.data.version === 1 &&
-          Array.isArray(this.data.users) &&
-          Array.isArray(this.data.providers),
-        "INVALID_CONSOLE_STATE",
-      );
-      check(
-        this.data.users.some(
-          (u) =>
-            u.id === "admin" && u.local && u.role === "admin" && !u.disabled,
-        ),
-        "RECOVERY_ADMIN_MISSING",
-      );
-      if (this.data.infrastructure) {
-        this.data.infrastructure = updateInfrastructureProfile(
-          {},
-          this.data.infrastructure,
-        );
-      }
     } else {
       this.data = {
         version: 1,

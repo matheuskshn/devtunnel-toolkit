@@ -921,15 +921,44 @@ dialog::backdrop {
   padding: 22px 24px;
 }
 .device-code {
-  font-size: 30px;
-  letter-spacing: 5px;
-  text-align: center;
+  width: 100%;
+  min-height: 86px;
+  flex-direction: column;
+  gap: 7px;
   background: var(--note-bg);
   border: 1px dashed var(--focus);
   border-radius: 8px;
   padding: 20px;
   margin: 18px 0;
+  color: var(--ink);
+}
+.device-code:hover {
+  background: var(--hover);
+  border-style: solid;
+}
+.device-code:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  border-style: solid;
+}
+.device-code.copied {
+  color: var(--success);
+  background: var(--success-bg);
+  border-color: var(--success);
+  border-style: solid;
+}
+.device-code-value {
+  font-size: 30px;
+  letter-spacing: 5px;
   font-family: ui-monospace, monospace;
+}
+.device-code-feedback {
+  min-height: 15px;
+  font-size: 11px;
+  letter-spacing: 0;
+  color: var(--muted);
+}
+.device-code.copied .device-code-feedback {
+  color: var(--success);
 }
 .detail-grid {
   display: grid;

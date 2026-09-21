@@ -2,6 +2,7 @@
 const $ = (s) => document.querySelector(s),
   app = $("#app"),
   dialog = $("#dialog");
+const COPY_CONFIRMATION_MS = 3000;
 dialog.addEventListener("close", () => {
   if (!dialog.open) dialog.replaceChildren();
 });
@@ -196,6 +197,27 @@ function toast(message) {
   $("#toast").classList.add("show");
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => $("#toast").classList.remove("show"), 5000);
+}
+async function copyDeviceCode(button) {
+  const code = button.dataset.copyCode;
+  if (!code) return;
+  try {
+    await navigator.clipboard.writeText(code);
+  } catch {
+    throw new Error("Não foi possível copiar o código.");
+  }
+  const label = button.querySelector("[data-copy-label]");
+  button.classList.add("copied");
+  button.setAttribute("aria-label", `Código ${code} copiado`);
+  if (label) label.textContent = "Código copiado";
+  toast("Código copiado para a área de transferência.");
+  clearTimeout(button.copyResetTimer);
+  button.copyResetTimer = setTimeout(() => {
+    if (!button.isConnected || button.dataset.copyCode !== code) return;
+    button.classList.remove("copied");
+    button.setAttribute("aria-label", `Copiar código de autenticação ${code}`);
+    if (label) label.textContent = "Clique para copiar";
+  }, COPY_CONFIRMATION_MS);
 }
 const brandMark = () =>
   `<span class="brand-mark" aria-hidden="true"><img class="brand-logo brand-logo-light" src="/brand/mark-light.svg" alt=""><img class="brand-logo brand-logo-dark" src="/brand/mark-dark.svg" alt=""><img class="brand-logo brand-logo-contrast" src="/brand/mark-contrast.svg" alt=""></span>`;
@@ -1215,7 +1237,7 @@ function device(job) {
   modal(
     "Autenticar conta do túnel",
     `${sessionLabelById(job.session)} - código visível somente para quem iniciou.`,
-    `<div data-wait-job="${escapeHtml(job.id)}" data-device-code="${escapeHtml(job.device.code)}"><div class="note">Abra o site oficial em outra aba e informe o código abaixo. Esta autenticação não altera sua conta do console.</div><a href="${escapeHtml(job.device.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(job.device.url)}</a><div class="device-code">${escapeHtml(job.device.code)}</div><p class="hint">Aguardando a conclusão. O código será removido ao terminar.</p></div>`,
+    `<div data-wait-job="${escapeHtml(job.id)}" data-device-code="${escapeHtml(job.device.code)}"><div class="note">Abra o site oficial em outra aba e informe o código abaixo. Esta autenticação não altera sua conta do console.</div><a href="${escapeHtml(job.device.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(job.device.url)}</a><button type="button" class="device-code" data-copy-code="${escapeHtml(job.device.code)}" aria-label="Copiar código de autenticação ${escapeHtml(job.device.code)}"><span class="device-code-value">${escapeHtml(job.device.code)}</span><span class="device-code-feedback" data-copy-label aria-live="polite">Clique para copiar</span></button><p class="hint">Aguardando a conclusão. O código será removido ao terminar.</p></div>`,
   );
 }
 const actionIcons = {
@@ -1756,6 +1778,7 @@ const clickHandlers = {
   action: runSessionAction,
   device: (button) =>
     device(overview.jobs.find((job) => job.id === button.dataset.device)),
+  copyCode: copyDeviceCode,
   user: (button) => userForm(button.dataset.user),
   provider: (button) => providerForm(button.dataset.provider),
   policy: policyForm,

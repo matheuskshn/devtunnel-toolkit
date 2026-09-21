@@ -10,6 +10,7 @@ function fixture() {
   const elements = new Map(),
     events = {},
     requests = [],
+    clipboard = [],
     timers = new Map();
   let nextTimer = 0;
   let initialBootstrap = true;
@@ -23,6 +24,10 @@ function fixture() {
         events: {},
         open: false,
         classList: { toggle() {}, add() {}, remove() {} },
+        attributes: {},
+        setAttribute(name, value) {
+          this.attributes[name] = value;
+        },
         addEventListener(name, callback) {
           this.events[name] = callback;
         },
@@ -70,6 +75,9 @@ function fixture() {
     },
     history: { replaceState() {} },
     window: { addEventListener() {}, scrollX: 0, scrollY: 0, scrollTo() {} },
+    navigator: {
+      clipboard: { writeText: async (value) => clipboard.push(value) },
+    },
     setInterval() {},
     clearTimeout: (id) => timers.delete(id),
     setTimeout: (callback) => {
@@ -93,7 +101,7 @@ function fixture() {
       {id:'session-two',provider:'microsoft',status:'login_required',proxy_port:3140,listener:18003,created_at:'2026-01-01T00:00:00Z'}]};
     catalog = {users:{revision:1,users:[]},providers:{revision:1,callback:'https://hub.example.com/auth/callback',providers:[]},settings:{revision:1,config:{hubId:'testhub',proxyPort:3140,socksPort:3180,socksEnabled:true,allowAllDomains:false,allowedDomains:[],allowedPorts:[80,443],connectPorts:[443],allowedProviders:['github','microsoft'],allowedMicrosoftTenants:[],tunnelNameTemplate:'{hub_id}-{username}',maxSessions:50,maintenanceSeconds:300,listenerStart:18001,listenerEnd:18999,healthPort:8080,defaultTunnelExpirationHours:48,minTunnelExpirationHours:1,maxTunnelExpirationHours:720,microsoftExpectedAuthHours:24,githubExpectedAuthHours:720,authWarningHours:2,authCheckSeconds:900},infrastructure:[{name:'HUB_ID',sensitive:false,configured:true,source:'environment',value:'testhub',restartRequired:true},{name:'HUB_PG_PASSWORD',sensitive:true,configured:true,source:'environment-reference',reference:'DATABASE_PASSWORD',restartRequired:true}],infrastructureProfile:[{name:'HUB_ID',sensitive:false,configured:true,value:'next-hub'},{name:'HUB_PG_PASSWORD',sensitive:true,configured:true}]}};
     dialog.querySelector = (selector) => selector === '[data-wait-job]' ? null : document.querySelector('#dialog '+selector);`);
-  return { run, element, document, events, requests, context };
+  return { run, element, document, events, requests, clipboard, context };
 }
 
 test("HTML helpers escape content and attribute boundaries without using deprecated globals", () => {
@@ -324,6 +332,16 @@ test("modal workflows preserve controls, action confirmation and owner-only devi
   );
   assert.match(f.element("#dialog").innerHTML, /ABCD-1234/);
   assert.match(f.element("#dialog").innerHTML, /somente para quem iniciou/);
+  assert.match(f.element("#dialog").innerHTML, /data-copy-code="ABCD-1234"/);
+  const copy = f.element("#copy-code");
+  copy.dataset.copyCode = "ABCD-1234";
+  await f.run('copyDeviceCode(document.querySelector("#copy-code"))');
+  assert.deepEqual(f.clipboard, ["ABCD-1234"]);
+  assert.equal(
+    f.element("#copy-code [data-copy-label]").textContent,
+    "Código copiado",
+  );
+  assert.equal(copy.attributes["aria-label"], "Código ABCD-1234 copiado");
 });
 
 test("HTTP requests retain same-origin cookies, CSRF and passive-refresh marker", async () => {
