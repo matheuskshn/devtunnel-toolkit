@@ -1,6 +1,7 @@
 import { randomBytes, createHash } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { check, HubError } from "../model.js";
+import type { Config } from "../model.js";
 import type { ControlStore, User } from "./control.js";
 
 export const randomToken = () => randomBytes(32).toString("base64url");
@@ -59,6 +60,15 @@ export function webOptions(env: NodeJS.ProcessEnv): WebOptions | undefined {
     secure: url.protocol === "https:",
     requirePasswordChange: requirePasswordChange === "true",
   };
+}
+export function validateWebPort(options: WebOptions, config: Config): void {
+  check(
+    options.port !== config.healthPort &&
+      options.port !== config.proxyPort &&
+      options.port !== config.socksPort &&
+      !(options.port >= config.listenerStart && options.port <= config.listenerEnd),
+    "WEB_PORT_COLLISION",
+  );
 }
 export function cookie(req: IncomingMessage, name: string): string | undefined {
   const values = (req.headers.cookie ?? "")

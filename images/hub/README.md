@@ -434,6 +434,8 @@ pooling: the manager holds a session-level advisory lock for its lifetime.
 | `HUB_CREDENTIAL_KEY`                                               | Required random 32-byte key, base64 encoded                       |
 | `HUB_CREDENTIAL_KEY_ID`                                            | Active key label, default `primary`                               |
 | `HUB_CREDENTIAL_PREVIOUS_KEYS`                                     | Optional JSON map of previous key labels to base64 keys           |
+| `HUB_DEPLOYMENT_ID`                                                | Unique release identity outside ACA for coordinated replacement   |
+| `HUB_LEADER_HANDOFF`                                               | Enable or disable coordinated replacement explicitly              |
 
 TLS checks the server certificate and hostname. Inject the password and encryption
 key using platform secrets, not image layers, source files or command arguments.
@@ -466,12 +468,24 @@ checkpoint restores without an interactive login, subject to provider validity.
 Logout checkpoints credential deletion, and removal preserves audit tombstones.
 Backups can still contain earlier logins; apply retention and provider revocation.
 
-The database lock prevents a second active manager for the same database/Hub ID
-(exit 75). The manager monitors its dedicated connection and terminates workers
-if ownership becomes uncertain. There is no reconnect-with-stale-state or local
-fallback. Database outages interrupt all sessions. Keep one replica and use
-stop/drain/start deployments; this is not active-active hosting or a zero-overlap
-guarantee under arbitrary network partitions/process suspension.
+The database lock prevents a second active manager for the same database/Hub ID.
+The manager monitors its dedicated connection and terminates workers if ownership
+becomes uncertain. There is no reconnect-with-stale-state or local fallback.
+Database outages interrupt all sessions.
+
+When a deployment identity is available, PostgreSQL also coordinates revision
+replacement. ACA's built-in `CONTAINER_APP_REVISION` is used automatically. Other
+executors can set a stable, unique `HUB_DEPLOYMENT_ID`; `HUB_LEADER_HANDOFF`
+defaults to enabled when either identity exists. The candidate validates the
+stored key, state and web-console policy before requesting leadership. The current
+leader then drains its sessions, releases the advisory lock and the candidate
+starts. A superseded candidate or a second replica of the same deployment exits
+with code 75. Without an identity the original immediate lock rejection remains.
+
+This is a bounded single-leader handoff, not active-active hosting or uninterrupted
+relay sockets. Clients may reconnect briefly. Keep exactly one replica per
+revision. Network partitions and suspended processes still cannot provide a
+zero-overlap guarantee.
 
 For key rotation, supply a new active ID/key plus the old key in
 `HUB_CREDENTIAL_PREVIOUS_KEYS`, then restart. Subsequent checkpoints use the new
@@ -515,10 +529,12 @@ Kubernetes; omit the data volume for this backend, but retain private writable
 runtime directories and all container security controls.
 
 `Single` revision mode and `maxReplicas: 1` do not prevent rollout overlap between
-revisions. Use a stop/drain/start rollout for v1, accept downtime, and verify
-locking from two actual replicas against the same mounted share before use.
-If SMB locking or directory fsync does not behave correctly, do not bypass the
-guard. A platform lease implementation or different storage strategy is required.
+revisions. PostgreSQL deployments use the coordinated handoff described above.
+The first upgrade from an older image that does not monitor handoff requests still
+requires a controlled stop/start; later compatible revisions replace each other
+automatically. The filesystem backend still requires stop/drain/start. Verify
+locking and rollout behavior using actual replicas and the selected storage. If
+SMB locking or directory fsync does not behave correctly, do not bypass the guard.
 Scale-to-zero, active-active hosting and high availability are not supported.
 
 The [Kubernetes template](examples/kubernetes/hub.yaml) uses a PVC, `Recreate`,

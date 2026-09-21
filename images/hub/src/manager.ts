@@ -46,7 +46,7 @@ import {
 import { squidConfig, auditRecord } from "./squid.js";
 import { launch, terminate, command, cleanEnvironment } from "./processes.js";
 import { ControlStore } from "./web/control.js";
-import { webOptions } from "./web/security.js";
+import { validateWebPort, webOptions } from "./web/security.js";
 import { WebConsole } from "./web/server.js";
 import { infrastructureFields } from "./environment.js";
 
@@ -113,16 +113,7 @@ export class Manager {
           this.config,
           parseConfig({ ...this.config, ...this.control.data.policy }),
         );
-      check(
-        options.port !== this.config.healthPort &&
-          options.port !== this.config.proxyPort &&
-          options.port !== this.config.socksPort &&
-          !(
-            options.port >= this.config.listenerStart &&
-            options.port <= this.config.listenerEnd
-          ),
-        "WEB_PORT_COLLISION",
-      );
+      validateWebPort(options, this.config);
       this.web = new WebConsole(
         {
           config: this.config,

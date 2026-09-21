@@ -26,6 +26,8 @@ properties:
           - {name: HUB_PG_PASSWORD, secretRef: hub-pg-password}
           - {name: HUB_CREDENTIAL_KEY, secretRef: hub-credential-key}
           - {name: HUB_CREDENTIAL_KEY_ID, value: primary}
+          # Uses ACA's injected CONTAINER_APP_REVISION as the deployment identity.
+          - {name: HUB_LEADER_HANDOFF, value: "true"}
           - {name: HUB_ALLOWED_PROVIDERS, value: microsoft}
           - {name: HUB_ALLOWED_MICROSOFT_TENANTS, value: "00000000-0000-0000-0000-000000000000"}
           - {name: HUB_ALLOWED_DOMAINS, value: service.example.com}
@@ -41,5 +43,5 @@ properties:
             initialDelaySeconds: 5
             periodSeconds: 10
     scale: {minReplicas: 1, maxReplicas: 1}
-# Drain/stop the previous manager before starting a replacement. The database
-# advisory lock rejects concurrent managers; a lost connection stops workers.
+# The first upgrade from a pre-handoff image needs a controlled stop/start.
+# Compatible later revisions coordinate drain and leadership through PostgreSQL.

@@ -216,7 +216,7 @@ class StateMappings {
     }
   }
 }
-function validateState(s: State, config: Config): void {
+export function validateState(s: State, config: Config): void {
   check(
     s.version === 1 && s.hub_id === config.hubId && Array.isArray(s.sessions),
     "STATE_CONFIG_MISMATCH",
