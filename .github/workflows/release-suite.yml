@@ -57,6 +57,12 @@ jobs:
       mode: release
       tag: ${{ inputs.tag }}
     secrets: inherit
+  desktop:
+    needs: [prepare, checks]
+    uses: ./.github/workflows/desktop.yml
+    with:
+      ref: ${{ needs.prepare.outputs.sha }}
+      package: true
   record:
     needs: [prepare, checks, build]
     runs-on: ubuntu-latest
@@ -105,7 +111,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
   finalize:
-    needs: [prepare, checks, record]
+    needs: [prepare, checks, record, desktop]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -129,6 +135,11 @@ jobs:
         with:
           pattern: release-devtunnel-toolkit*
           path: release-assets
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-desktop-*
+          path: desktop-release-assets
           merge-multiple: true
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
