@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "Titanium.Web.Proxy": {
+        "type": "Direct",
+        "requested": "[7.0.11, )",
+        "resolved": "7.0.11",
+        "contentHash": "TFW+bna4eyLQJkUqhgg4sLYREEUb5HDzqV5SgU7Q46qOevMnDwAAUlBdB+YX0eKZcEOwRgomJKM8Fm3sZZIAXg==",
+        "dependencies": {
+          "BouncyCastle.Cryptography": "2.6.2",
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.0",
+          "Titanium.Web.Proxy.Abstractions": "7.0.11"
+        }
+      },
+      "BouncyCastle.Cryptography": {
+        "type": "Transitive",
+        "resolved": "2.6.2",
+        "contentHash": "7oWOcvnntmMKNzDLsdxAYqApt+AjpRpP2CShjMfIa3umZ42UQMvH0tl1qAliYPNYO6vTdcGMqnRrCPmsfzTI1w=="
+      },
+      "Microsoft.Extensions.DependencyInjection.Abstractions": {
+        "type": "Transitive",
+        "resolved": "10.0.0",
+        "contentHash": "L3AdmZ1WOK4XXT5YFPEwyt0ep6l8lGIPs7F5OOBZc77Zqeo01Of7XXICy47628sdVl0v/owxYJTe86DTgFwKCA=="
+      },
+      "Microsoft.Extensions.Logging.Abstractions": {
+        "type": "Transitive",
+        "resolved": "10.0.0",
+        "contentHash": "FU/IfjDfwaMuKr414SSQNTIti/69bHEMb+QKrskRb26oVqpx3lNFXMjs/RC9ZUuhBhcwDM2BwOgoMw+PZ+beqQ==",
+        "dependencies": {
+          "Microsoft.Extensions.DependencyInjection.Abstractions": "10.0.0"
+        }
+      },
+      "System.Security.Cryptography.ProtectedData": {
+        "type": "Transitive",
+        "resolved": "10.0.12",
+        "contentHash": "wO0W8VDMeRJZakRySOmemAnrBZMwEFRlbfBtATxUiLf2I3IhSRnCp1Vt157NWptdE4IJ7eftd5n8q9LtaKHFTQ=="
+      },
+      "Titanium.Web.Proxy.Abstractions": {
+        "type": "Transitive",
+        "resolved": "7.0.11",
+        "contentHash": "X+c3oIMZK3LGr2I+vSO+wCIEY8aemH91W4/fr0R3MKyhPsMB+lqIh7j/D0BQgnFDNV15bIAQqgKMCGIdzsyvZg==",
+        "dependencies": {
+          "Microsoft.Extensions.Logging.Abstractions": "10.0.0"
+        }
+      },
+      "devtunneltoolkit.core": {
+        "type": "Project"
+      },
+      "devtunneltoolkit.networking": {
+        "type": "Project",
+        "dependencies": {
+          "DevTunnelToolkit.Core": "[0.1.0-rc.9, )"
+        }
+      },
+      "devtunneltoolkit.platform": {
+        "type": "Project",
+        "dependencies": {
+          "DevTunnelToolkit.Core": "[0.1.0-rc.9, )",
+          "System.Security.Cryptography.ProtectedData": "[10.0.12, )"
+        }
+      }
+    },
+    "net10.0/linux-arm64": {},
+    "net10.0/linux-x64": {},
+    "net10.0/win-arm64": {},
+    "net10.0/win-x64": {}
+  }
+}

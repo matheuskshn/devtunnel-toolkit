@@ -1,0 +1,21 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DevTunnelToolkit.Core/DevTunnelToolkit.Core.csproj" />
+    <Project Path="src/DevTunnelToolkit.Platform/DevTunnelToolkit.Platform.csproj" />
+    <Project Path="src/DevTunnelToolkit.Persistence/DevTunnelToolkit.Persistence.csproj" />
+    <Project Path="src/DevTunnelToolkit.Ipc/DevTunnelToolkit.Ipc.csproj" />
+    <Project Path="src/DevTunnelToolkit.Networking/DevTunnelToolkit.Networking.csproj" />
+    <Project Path="src/DevTunnelToolkit.DevTunnels/DevTunnelToolkit.DevTunnels.csproj" />
+    <Project Path="src/DevTunnelToolkit.Application/DevTunnelToolkit.Application.csproj" />
+    <Project Path="src/DevTunnelToolkit.Agent/DevTunnelToolkit.Agent.csproj" />
+    <Project Path="src/DevTunnelToolkit.Cli/DevTunnelToolkit.Cli.csproj" />
+    <Project Path="src/DevTunnelToolkit.App/DevTunnelToolkit.App.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DevTunnelToolkit.App.Tests/DevTunnelToolkit.App.Tests.csproj" />
+    <Project Path="tests/DevTunnelToolkit.DevTunnels.Tests/DevTunnelToolkit.DevTunnels.Tests.csproj" />
+    <Project Path="tests/DevTunnelToolkit.IntegrationTests/DevTunnelToolkit.IntegrationTests.csproj" />
+    <Project Path="tests/DevTunnelToolkit.Networking.Tests/DevTunnelToolkit.Networking.Tests.csproj" />
+    <Project Path="tests/DevTunnelToolkit.Platform.Tests/DevTunnelToolkit.Platform.Tests.csproj" />
+  </Folder>
+</Solution>

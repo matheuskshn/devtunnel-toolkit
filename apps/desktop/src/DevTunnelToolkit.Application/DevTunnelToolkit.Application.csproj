@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Titanium.Web.Proxy" Version="7.0.11" />
+    <ProjectReference Include="../DevTunnelToolkit.Core/DevTunnelToolkit.Core.csproj" />
+    <ProjectReference Include="../DevTunnelToolkit.Networking/DevTunnelToolkit.Networking.csproj" />
+    <ProjectReference Include="../DevTunnelToolkit.Platform/DevTunnelToolkit.Platform.csproj" />
+  </ItemGroup>
+</Project>

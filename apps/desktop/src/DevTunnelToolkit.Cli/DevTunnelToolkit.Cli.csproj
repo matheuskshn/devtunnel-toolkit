@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <ApplicationIcon>../../packaging/branding/app.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../DevTunnelToolkit.Ipc/DevTunnelToolkit.Ipc.csproj" /></ItemGroup>
+</Project>

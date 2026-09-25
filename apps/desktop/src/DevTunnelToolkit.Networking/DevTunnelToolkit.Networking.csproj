@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../DevTunnelToolkit.Core/DevTunnelToolkit.Core.csproj" />
+  </ItemGroup>
+</Project>

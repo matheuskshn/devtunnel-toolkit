@@ -26,6 +26,11 @@ an appropriate probe or use Docker's `--no-healthcheck` for that one-shot task.
 Developer-focused toolkit that extends Microsoft Dev Tunnels with local network
 access helpers.
 
+The [desktop client](apps/desktop/README.md) adds a native Windows/Linux interface,
+a per-user background agent and a CLI for multiple identities, tunnel discovery
+and configurable local TCP port mappings. Its code and build pipeline are
+separate from the container images.
+
 It packages three server-side services and one optional client-side helper:
 
 | Service     | Image                           | Purpose                                                                            |

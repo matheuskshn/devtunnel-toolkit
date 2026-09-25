@@ -1,0 +1,6 @@
+[*.{cs,csproj,props,slnx}]
+indent_size = 4
+
+[*.cs]
+csharp_style_namespace_declarations = file_scoped:warning
+dotnet_sort_system_directives_first = true
