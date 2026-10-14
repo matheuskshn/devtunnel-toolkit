@@ -111,7 +111,7 @@ jobs:
           mkdir -p native-digests
           node --input-type=module -e 'import {writeFileSync} from "node:fs"; const {NATIVE_ARCH: arch,NATIVE_DIGEST: digest}=process.env; if(!/^(amd64|arm64)$/.test(arch)||!/^sha256:[a-f0-9]{64}$/.test(digest))throw Error("INVALID_NATIVE_DIGEST"); writeFileSync(`native-digests/${arch}.json`,JSON.stringify({arch,digest}));'
       - if: inputs.publish && github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-${{ inputs.image }}--${{ matrix.arch }}
           path: native-digests/*.json
