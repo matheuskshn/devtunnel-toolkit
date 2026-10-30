@@ -204,7 +204,7 @@ public sealed class DesktopTests
         await vm.RefreshAsync();
         var window = new MainWindow(vm);
         window.Show();
-        foreach (var page in new[] { "Contas", "Túneis", "Portas", "Logs", "Configurações", "Dashboard" })
+        foreach (var page in new[] { "Contas", "Conexões", "Serviços", "DevTunnel", "Portas", "Proxy e PAC", "Logs", "Configurações", "Dashboard" })
         {
             var button = window.GetVisualDescendants().OfType<Button>().First(b => AutomationProperties.GetName(b) == $"Abrir {page}");
             button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

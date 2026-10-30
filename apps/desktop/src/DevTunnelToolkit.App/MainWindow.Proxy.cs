@@ -12,13 +12,20 @@ public sealed partial class MainWindow
 {
     private TextBlock? _proxyClients;
     public ToolkitViewModel Model => _model;
-    public void NavigateTo(string page) { _currentPage = page; RefreshView(); }
+    public void NavigateTo(string page)
+    {
+        if (page == "Hospedagem") _devTunnelTab = 1;
+        if (page == "Túneis remotos") _devTunnelTab = 0;
+        _currentPage = page switch { "Túneis" => "Conexões", "Hospedagem" or "Túneis remotos" => "DevTunnel", _ => page };
+        RefreshView();
+    }
 
     public async Task<bool> ConfirmShutdownAsync()
     {
         Show(); Activate();
         var count = _model.Snapshot?.Connections.Count(c => c.State is not (ConnectionState.Stopped or ConnectionState.Failed)) ?? 0;
-        if (!await ConfirmAsync("Encerrar DevTunnel Toolkit", $"Encerrar o Agent, {count} túnel(is), o proxy local e esta interface? Aplicativos configurados para esse proxy perderão o acesso por ele. As contas serão preservadas.")) return false;
+        var hosts = _model.Snapshot?.HostStatuses.Count(h => h.State is not (ConnectionState.Stopped or ConnectionState.Failed)) ?? 0;
+        if (!await ConfirmAsync("Encerrar DevTunnel Toolkit", $"Encerrar o Agent, {count} cliente(s), {hosts} hospedagem(ns), os proxies e esta interface? Aplicativos que usam estes serviços perderão o acesso por eles. Contas e recursos remotos serão preservados.")) return false;
         return await _model.ShutdownAgentAsync();
     }
 

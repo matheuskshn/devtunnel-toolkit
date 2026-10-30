@@ -18,6 +18,7 @@ internal static class Program
             var json = arguments.Remove("--json");
             var client = new ToolkitClient(dataDirectory);
             if (arguments.Count == 0 || arguments.Contains("--help")) { Help(); return 0; }
+            if (await RemoteCommands.TryExecuteAsync(client, arguments, stop.Token)) return 0;
             if (arguments[0] == "agent")
             {
                 RequireCount(arguments, 2);
@@ -227,6 +228,27 @@ internal static class Program
         tunnel connect|stop|reconnect|refresh|remove TUNNEL_OR_PROFILE_ID
         tunnel import FILE.json
         settings import FILE.json
+        remote list|clusters ACCOUNT_ID
+        remote show|diagnostics ACCOUNT_ID TUNNEL.CLUSTER
+        remote create ACCOUNT_ID SPEC.json
+        remote update ACCOUNT_ID TUNNEL.CLUSTER SPEC.json
+        remote delete ACCOUNT_ID TUNNEL.CLUSTER --confirm TUNNEL.CLUSTER
+        remote delete-batch ACCOUNT_ID SELECTION.json
+        remote port-create|port-update ACCOUNT_ID TUNNEL.CLUSTER PORT.json
+        remote port-delete ACCOUNT_ID TUNNEL.CLUSTER PORT --confirm TUNNEL.CLUSTER
+        remote access-add ACCOUNT_ID TUNNEL.CLUSTER ENTRY.json [--port PORT]
+        remote access-delete ACCOUNT_ID TUNNEL.CLUSTER ENTRY_ID [--port PORT] --confirm TUNNEL.CLUSTER
+        remote access-reset ACCOUNT_ID TUNNEL.CLUSTER [--port PORT] --confirm TUNNEL.CLUSTER
+        remote token ACCOUNT_ID TUNNEL.CLUSTER SCOPES [--port PORT] [--show-token]
+        service list | service import PROFILE.json
+        service start|stop|remove SERVICE_ID
+        host list | host import PROFILE.json
+        host start|stop|restart|remove HOST_ID
+        host prepare HOST_ID --confirm TUNNEL.CLUSTER
+        diagnostic echo-start [PORT] | diagnostic echo-stop | diagnostic echo-status
+        diagnostic ping TUNNEL_OR_PROFILE_ID REMOTE_PORT
         Removing a local profile never deletes the remote tunnel.
+        Services run independently of tunnel publications. Stop a service before editing it.
+        Unlink referenced services before removing them. Starting a host never starts a service.
         """);
 }

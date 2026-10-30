@@ -122,7 +122,7 @@ public sealed partial class MainWindow : Window
         grid.Children.Add(brand);
         var navigation = new StackPanel { Spacing = 7 };
         navigation.Children.Add(Text("WORKSPACE", 10, FontWeight.SemiBold, "Muted"));
-        foreach (var name in new[] { "Dashboard", "Contas", "Túneis", "Portas", "Proxy e PAC", "Logs", "Configurações" })
+        foreach (var name in new[] { "Dashboard", "Contas", "Conexões", "Serviços", "DevTunnel", "Portas", "Proxy e PAC", "Logs", "Configurações" })
         {
             var button = ActionButton(name, () => { _currentPage = name; RefreshView(); return Task.CompletedTask; });
             button.HorizontalAlignment = HorizontalAlignment.Stretch;
@@ -170,7 +170,9 @@ public sealed partial class MainWindow : Window
         _description.Text = _currentPage switch
         {
             "Contas" => "Identidades isoladas. Autenticação individual por provedor.",
-            "Túneis" => "Descubra túneis privados e controle suas conexões locais.",
+            "Conexões" => "Acesse túneis remotos neste computador, sem assumir sua publicação.",
+            "DevTunnel" => "Gerencie os túneis da conta e publique serviços ou portas deste Desktop.",
+            "Serviços" => "Proxies HTTP/CONNECT e SOCKS5 independentes, com portas e políticas próprias.",
             "Portas" => "Endereços locais, portas remotas e mapeamentos efetivos.",
             "Proxy e PAC" => "Roteamento por destino, proxy local e configuração automática.",
             "Logs" => "Eventos operacionais do agente, atualizados ao vivo.",
@@ -179,7 +181,7 @@ public sealed partial class MainWindow : Window
         };
         if (!_primary.Classes.Contains("working"))
         {
-            _primary.Content = _currentPage switch { "Contas" => "Adicionar conta", "Configurações" => "Editar configurações", "Proxy e PAC" => "Editar proxy", "Logs" => "Copiar eventos", _ => "Novo túnel" };
+            _primary.Content = _currentPage switch { "Contas" => "Adicionar conta", "DevTunnel" => _devTunnelTab == 1 ? "Nova publicação" : "Criar túnel remoto", "Serviços" => "Novo serviço", "Configurações" => "Editar configurações", "Proxy e PAC" => "Editar proxy", "Logs" => "Copiar eventos", _ => "Nova conexão" };
             AutomationProperties.SetName(_primary, _primary.Content?.ToString());
         }
         var snapshot = _model.Snapshot;
@@ -229,7 +231,9 @@ public sealed partial class MainWindow : Window
         _page.Content = _currentPage switch
         {
             "Contas" => AccountsPage(snapshot),
-            "Túneis" => TunnelsPage(snapshot),
+            "Conexões" => TunnelsPage(snapshot),
+            "DevTunnel" => DevTunnelPage(snapshot),
+            "Serviços" => ServicesPage(snapshot),
             "Portas" => PortsPage(snapshot),
             "Proxy e PAC" => ProxyPage(snapshot),
             "Logs" => LogsPage(snapshot),
@@ -241,7 +245,9 @@ public sealed partial class MainWindow : Window
     private string PageSignature(AgentSnapshot snapshot) => JsonSerializer.Serialize(_currentPage switch
     {
         "Contas" => (object)new { snapshot.Accounts, snapshot.Logins, snapshot.Tunnels, DesktopLogins = snapshot.Accounts.Select(a => _model.IsDesktopLoginActive(a.Id)), _model.DiscoveryAccountId, _model.DiscoveredTunnels },
-        "Túneis" => new { snapshot.Accounts, snapshot.Tunnels, snapshot.Connections, _model.DiscoveryAccountId, _model.DiscoveredTunnels },
+        "Conexões" => new { snapshot.Accounts, snapshot.Tunnels, snapshot.Connections, _model.DiscoveryAccountId, _model.DiscoveredTunnels },
+        "DevTunnel" => new { snapshot.Accounts, _model.RemoteAccountId, _model.RemoteTunnels, snapshot.Hosts, snapshot.HostStatuses, snapshot.Services, snapshot.ServiceStatuses, snapshot.DiagnosticEcho, snapshot.Tunnels, snapshot.Connections, _devTunnelTab },
+        "Serviços" => new { snapshot.Services, snapshot.ServiceStatuses, snapshot.Hosts, snapshot.HostStatuses },
         "Portas" => new { snapshot.Tunnels, snapshot.Connections },
         "Proxy e PAC" => new { snapshot.Settings, snapshot.Tunnels, snapshot.ProxyErrorCode, snapshot.PacErrorCode },
         "Configurações" => new { snapshot.Settings, snapshot.Capabilities },
@@ -541,6 +547,8 @@ public sealed partial class MainWindow : Window
         switch (_currentPage)
         {
             case "Contas": await EditAccountAsync(); break;
+            case "DevTunnel": if (_devTunnelTab == 1) await EditHostAsync(); else await NewRemoteTunnelAsync(); break;
+            case "Serviços": await EditServiceAsync(); break;
             case "Configurações": await EditSettingsAsync(); break;
             case "Proxy e PAC": await EditProxyAsync(); break;
             case "Logs":
@@ -783,7 +791,9 @@ public sealed partial class MainWindow : Window
         {
             "Dashboard" => "M3,3 L10,3 10,10 3,10 Z M14,3 L21,3 21,10 14,10 Z M3,14 L10,14 10,21 3,21 Z M14,14 L21,14 21,21 14,21 Z",
             "Contas" => "M16,21 L16,19 C16,15 4,15 4,19 L4,21 M10,11 A4,4 0 1 0 10,3 A4,4 0 1 0 10,11 M18,4 C22,4 22,10 18,10 M19,15 C22,15 23,17 23,20",
-            "Túneis" => "M5,21 L5,10 A7,7 0 0 1 19,10 L19,21 M9,21 L9,10 A3,3 0 0 1 15,10 L15,21 M1,14 L7,14 M4,11 L7,14 4,17 M17,14 L23,14 M20,11 L23,14 20,17",
+            "Conexões" => "M5,21 L5,10 A7,7 0 0 1 19,10 L19,21 M9,21 L9,10 A3,3 0 0 1 15,10 L15,21 M1,14 L7,14 M4,11 L7,14 4,17 M17,14 L23,14 M20,11 L23,14 20,17",
+            "DevTunnel" => "M5,17 C0,17 0,9 5,9 C5,1 17,1 18,9 C24,9 24,17 19,17 M7,13 L7,23 M4,20 L7,23 10,20 M17,23 L17,13 M14,16 L17,13 20,16",
+            "Serviços" => "M3,3 L21,3 21,10 3,10 Z M3,14 L21,14 21,21 3,21 Z M6,6 L7,6 M6,17 L7,17 M15,6 L18,6 M15,17 L18,17",
             "Portas" => "M6,3 L6,9 M18,15 L18,21 M3,9 L9,9 9,15 3,15 Z M15,9 L21,9 21,15 15,15 Z M6,15 L6,18 18,18 M18,9 L18,6 6,6",
             "Proxy e PAC" => "M3,12 L9,12 M6,9 L9,12 6,15 M9,7 L15,7 15,17 9,17 Z M15,9 L21,5 M18,5 L21,5 21,8 M15,15 L21,19 M18,19 L21,19 21,16",
             "Logs" => "M5,3 L19,3 19,21 5,21 Z M8,7 L16,7 M8,11 L16,11 M8,15 L13,15",

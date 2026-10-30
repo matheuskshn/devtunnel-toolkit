@@ -95,6 +95,10 @@ public sealed partial class ToolkitViewModel
                 if (TunnelActivity(tunnel.Id) is { Running: true } activity) activities.Add(activity with { Description = $"{tunnel.CanonicalId}: {activity.Description}" });
             foreach (var account in Snapshot?.Accounts ?? [])
                 if (AccountActivity(account.Id) is { Running: true } activity) activities.Add(activity with { Description = $"{account.DisplayName}: {activity.Description}" });
+            foreach (var host in Snapshot?.Hosts ?? [])
+                if (HostActivity(host.Id) is { Running: true } activity) activities.Add(activity with { Description = $"{host.CanonicalId}: {activity.Description}" });
+            foreach (var service in Snapshot?.Services ?? [])
+                if (ServiceActivity(service.Id) is { Running: true } activity) activities.Add(activity with { Description = $"{service.Name}: {activity.Description}" });
             if (activities.Count == 0) return ForegroundActivity;
             var first = activities.OrderBy(a => a.StartedAt).First();
             return activities.Count == 1 ? first : first with { Description = $"{activities.Count} operações em andamento. {first.Description}" };
