@@ -6,7 +6,8 @@ using DevTunnelToolkit.Networking;
 
 namespace DevTunnelToolkit.Application;
 
-public sealed class AgentRuntime(IStateStore store, ICredentialVault vault, IAuthenticationService authentication, ITunnelService tunnels, PlatformCapabilities capabilities, IUserStartupManager? startup = null) : IAsyncDisposable
+public sealed partial class AgentRuntime(IStateStore store, ICredentialVault vault, IAuthenticationService authentication, ITunnelService tunnels, PlatformCapabilities capabilities, IUserStartupManager? startup = null,
+    IRemoteTunnelManagementService? remoteManagement = null, IHostingService? hosting = null, ManagedServiceRegistry? serviceRegistry = null) : IAsyncDisposable
 {
     private sealed record RunningOperation(CancellationTokenSource Cancellation, Task Completion);
     private readonly SemaphoreSlim mutation = new(1, 1);
@@ -30,6 +31,10 @@ public sealed class AgentRuntime(IStateStore store, ICredentialVault vault, IAut
     public async Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         state = await store.LoadAsync(cancellationToken);
+        var migrated = ServiceMigration.Upgrade(state);
+        if (!ReferenceEquals(migrated, state)) await store.SaveAsync(migrated, cancellationToken);
+        state = migrated;
+        services = serviceRegistry ?? new ManagedServiceRegistry(new PublishedProxyFactory(RecordHostedProxyEvent));
         foreach (var entry in await store.ReadLogsAsync(200, cancellationToken)) { recentLogs.Enqueue(entry); logSequence = Math.Max(logSequence, entry.Sequence); }
         await store.PruneLogsAsync(state.Settings.LogRetentionDays, cancellationToken);
         logWriter = WriteLogsAsync();
@@ -54,7 +59,14 @@ public sealed class AgentRuntime(IStateStore store, ICredentialVault vault, IAut
             catch (ToolkitException error) { await service.DisposeAsync(); pacError = error.Code; Log("Warning", error.Code, "Local PAC server could not start. Tunnel profiles remain available."); }
         }
         foreach (var profile in state.Tunnels) connections[profile.Id] = new(profile.Id, ConnectionState.Stopped);
+        foreach (var profile in state.Hosts) hostStatuses[profile.Id] = new(profile.Id, ConnectionState.Stopped);
+        foreach (var profile in state.Services) serviceStatuses[profile.Id] = new(profile.Id, ConnectionState.Stopped);
         Log("Information", "AGENT_STARTED", "Agent started.");
+        foreach (var profile in state.Services.Where(s => s.AutoStart))
+        {
+            try { await StartServiceAsync(profile, cancellationToken); }
+            catch (ToolkitException error) { SetServiceStatus(new(profile.Id, ConnectionState.Failed, error.Code)); }
+        }
         foreach (var profile in state.Tunnels.Where(t => t.AutoConnect))
         {
             try { StartConnection(profile.Id); }
@@ -64,16 +76,32 @@ public sealed class AgentRuntime(IStateStore store, ICredentialVault vault, IAut
                 Log("Warning", error.Code, "Automatic connection could not start. Other profiles remain available.", profile.Id);
             }
         }
+        foreach (var profile in state.Hosts.Where(h => h.AutoStart))
+        {
+            try { StartHosting(profile.Id); }
+            catch (ToolkitException error) { SetHostStatus(new(profile.Id, ConnectionState.Failed, error.Code)); }
+        }
     }
 
     public AgentSnapshot Snapshot()
     {
-        lock (sync) return new(state.Accounts, state.Tunnels, [.. connections.Values.OrderBy(c => c.ProfileId)], [.. logins.Values], state.Settings, capabilities, [.. recentLogs], pacError, proxyError, proxy?.ActiveConnections ?? 0);
+        lock (sync) return new(state.Accounts, state.Tunnels, [.. connections.Values.OrderBy(c => c.ProfileId)], [.. logins.Values], state.Settings, capabilities, [.. recentLogs], pacError, proxyError, proxy?.ActiveConnections ?? 0)
+        {
+            Hosts = state.Hosts,
+            Services = state.Services,
+            ServiceStatuses = [.. serviceStatuses.Values.OrderBy(s => s.ServiceId)],
+            HostStatuses = [.. hostStatuses.Values.OrderBy(h => h.ProfileId)],
+            DiagnosticEcho = CurrentEcho
+        };
     }
 
     public async Task<object> DispatchAsync(string operation, JsonElement payload, CancellationToken cancellationToken)
     {
         if (operation == "status") return Snapshot();
+        if (operation.StartsWith("remote.", StringComparison.Ordinal)) return await DispatchRemoteAsync(operation, payload, cancellationToken);
+        if (operation.StartsWith("host.", StringComparison.Ordinal)) return await DispatchHostingAsync(operation, payload, cancellationToken);
+        if (operation.StartsWith("service.", StringComparison.Ordinal)) return await DispatchServicesAsync(operation, payload, cancellationToken);
+        if (operation.StartsWith("diagnostic.", StringComparison.Ordinal)) return await DispatchDiagnosticAsync(operation, payload, cancellationToken);
         if (operation == "proxy.test")
             return ProxyRouting.Decide(Snapshot(), payload.GetProperty("host").GetString() ?? "", payload.GetProperty("port").GetInt32());
         if (operation == "proxy.probe")
@@ -171,6 +199,7 @@ public sealed class AgentRuntime(IStateStore store, ICredentialVault vault, IAut
                     {
                         var account = Account(Id(payload));
                         if (state.Tunnels.Any(t => t.AccountId == account.Id)) throw new ToolkitException("ACCOUNT_HAS_TUNNELS");
+                        if (state.Hosts.Any(h => h.AccountId == account.Id)) throw new ToolkitException("ACCOUNT_HAS_HOSTS");
                         await CancelLoginAsync(account.Id);
                         await authentication.LogoutAsync(account, cancellationToken);
                         await SaveAsync(state with { Accounts = [.. state.Accounts.Where(a => a.Id != account.Id)] }, cancellationToken);
@@ -242,6 +271,16 @@ public sealed class AgentRuntime(IStateStore store, ICredentialVault vault, IAut
 
     private async Task ApplySettingsAsync(AppSettings settings, CancellationToken cancellationToken)
     {
+        if (serviceStatuses.Values.Any(s => s.State == ConnectionState.Connected &&
+            (settings.Proxy.Enabled && s.Port == settings.Proxy.Port || settings.Pac.Enabled && s.Port == settings.Pac.Port)))
+            throw new ToolkitException("SERVICE_PORT_CONFLICT");
+        lock (sync)
+        {
+            if (state.Hosts.Any(h => hostingOperations.TryGetValue(h.Id, out var runningHost) && !runningHost.Completion.IsCompleted &&
+                h.Ports.Any(p => p.Kind == HostPortKind.Service &&
+                    (settings.Proxy.Enabled && p.LocalPort == settings.Proxy.Port || settings.Pac.Enabled && p.LocalPort == settings.Pac.Port))))
+                throw new ToolkitException("HOST_LOCAL_SERVICE_CONFLICT");
+        }
         foreach (var rule in settings.Pac.Rules)
             if (!state.Tunnels.Any(t => t.Id == rule.ProfileId)) throw new ToolkitException("PAC_TUNNEL_NOT_FOUND");
         foreach (var rule in settings.Proxy.Rules.Where(r => r.Action == RouteAction.Tunnel))
@@ -520,6 +559,7 @@ public sealed class AgentRuntime(IStateStore store, ICredentialVault vault, IAut
     {
         await CancelLoginAsync(id);
         foreach (var profile in Snapshot().Tunnels.Where(t => t.AccountId == id)) await StopConnectionAsync(profile.Id);
+        foreach (var profile in Snapshot().Hosts.Where(h => h.AccountId == id)) await StopHostingAsync(profile.Id);
     }
 
     private async Task StopConnectionAsync(string id)
@@ -612,10 +652,12 @@ public sealed class AgentRuntime(IStateStore store, ICredentialVault vault, IAut
     {
         await lifetime.CancelAsync();
         RunningOperation[] operations;
-        lock (sync) operations = [.. running.Values, .. loggingIn.Values];
+        lock (sync) operations = [.. running.Values, .. loggingIn.Values, .. hostingOperations.Values];
         await Task.WhenAll(operations.Select(o => o.Completion));
+        await StopEchoAsync();
         if (proxy is not null) await proxy.DisposeAsync();
         if (pac is not null) await pac.DisposeAsync();
+        if (services is not null) await services.DisposeAsync();
         foreach (var operation in operations) operation.Cancellation.Dispose();
         logQueue.Writer.TryComplete();
         await logWriter;

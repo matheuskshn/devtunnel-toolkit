@@ -49,7 +49,12 @@ internal static class Program
             using var authentication = new HybridAuthenticationService(new NativeAuthenticationService(vault), cli);
             ITunnelService service = new CliTunnelService(new DevTunnelService(authentication), cli);
             var platform = new PlatformCapabilities(OperatingSystem.IsWindows() ? "Windows" : "Linux", vault.Available, startup.Supported, false, false, "TCP loopback and opt-in local PAC are available. System proxy, LAN/WSL exposure and firewall changes are not implemented.");
-            await using var runtime = new AgentRuntime(store, vault, authentication, service, platform, startup);
+            AgentRuntime? activeRuntime = null;
+            var publishedProxies = new PublishedProxyFactory((code, id) => activeRuntime?.RecordHostedProxyEvent(code, id));
+            var managedServices = new ManagedServiceRegistry(publishedProxies);
+            await using var runtime = new AgentRuntime(store, vault, authentication, service, platform, startup,
+                new RemoteTunnelManagement(authentication, cli), new TunnelHostingService(authentication, cli, managedServices), managedServices);
+            activeRuntime = runtime;
             using var lifetime = new CancellationTokenSource();
             Console.CancelKeyPress += (_, e) => { e.Cancel = true; lifetime.Cancel(); };
             using var termination = OperatingSystem.IsWindows() ? null : PosixSignalRegistration.Create(PosixSignal.SIGTERM, context => { context.Cancel = true; lifetime.Cancel(); });

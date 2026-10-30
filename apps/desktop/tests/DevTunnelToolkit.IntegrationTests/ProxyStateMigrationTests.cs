@@ -12,6 +12,7 @@ public sealed class ProxyStateMigrationTests
     [Theory]
     [InlineData("1")]
     [InlineData("2")]
+    [InlineData("3")]
     public async Task LegacySettingsLoadSafelyAndSaveUpgradesWithoutLosingProfiles(string schema)
     {
         var directory = Path.Combine(Path.GetTempPath(), "dtk-migration-" + Guid.NewGuid().ToString("N"));
@@ -44,7 +45,7 @@ public sealed class ProxyStateMigrationTests
             }
             await using var check = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = paths.DatabasePath, Pooling = false }.ToString());
             await check.OpenAsync(); using var version = check.CreateCommand(); version.CommandText = "SELECT value FROM metadata WHERE key='schema'";
-            Assert.Equal("3", await version.ExecuteScalarAsync());
+            Assert.Equal("5", await version.ExecuteScalarAsync());
         }
         finally { Directory.Delete(directory, true); }
     }

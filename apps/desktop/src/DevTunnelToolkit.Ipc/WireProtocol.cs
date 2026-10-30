@@ -10,9 +10,10 @@ public sealed record DesktopLoginCompletion(bool Success, bool Cancelled = false
 
 public static class WireProtocol
 {
-    // v5 adds connection-scoped Desktop-owned interactive login, without token transport.
+    // v7 separates service lifecycle and publication bindings. Reject older clients
+    // before they overwrite independent services or interpret a binding as a listener.
     // Reject incompatible peers before dispatching or silently dropping settings.
-    public const int Version = 5;
+    public const int Version = 7;
 
     public static string SafeDesktopLoginError(string? code) => code switch
     {

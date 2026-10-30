@@ -109,9 +109,18 @@ public sealed record PacSettings
 }
 public sealed record PlatformCapabilities(string OperatingSystem, bool CredentialVault, bool UserStartup, bool SystemProxy, bool WslExposure, string? Detail = null);
 public sealed record LogEntry(long Sequence, DateTimeOffset Timestamp, string Level, string Code, string Message, string? ProfileId = null);
-public sealed record AgentSnapshot(AccountProfile[] Accounts, TunnelProfile[] Tunnels, ConnectionStatus[] Connections, LoginStatus[] Logins, AppSettings Settings, PlatformCapabilities Capabilities, LogEntry[] Logs, string? PacErrorCode = null, string? ProxyErrorCode = null, int ProxyActiveConnections = 0);
+public sealed record AgentSnapshot(AccountProfile[] Accounts, TunnelProfile[] Tunnels, ConnectionStatus[] Connections, LoginStatus[] Logins, AppSettings Settings, PlatformCapabilities Capabilities, LogEntry[] Logs, string? PacErrorCode = null, string? ProxyErrorCode = null, int ProxyActiveConnections = 0)
+{
+    public ServiceProfile[] Services { get; init; } = [];
+    public ServiceStatus[] ServiceStatuses { get; init; } = [];
+    public HostProfile[] Hosts { get; init; } = [];
+    public HostStatus[] HostStatuses { get; init; } = [];
+    public EchoStatus DiagnosticEcho { get; init; } = new(false);
+}
 public sealed record ToolkitState(AccountProfile[] Accounts, TunnelProfile[] Tunnels, AppSettings Settings)
 {
+    public ServiceProfile[] Services { get; init; } = [];
+    public HostProfile[] Hosts { get; init; } = [];
     public static ToolkitState Empty => new([], [], new());
 }
 

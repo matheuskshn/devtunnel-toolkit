@@ -19,6 +19,9 @@ public sealed class ProtocolCompatibilityTests
     [InlineData("account.save", 3)]
     [InlineData("account.login.desktop", 4)]
     [InlineData("watch", 4)]
+    [InlineData("settings.save", 5)]
+    [InlineData("host.save", 6)]
+    [InlineData("watch", 6)]
     public async Task LegacyRequestsAreRejectedBeforeDispatchOrSnapshot(string operation, int version)
     {
         var directory = Path.Combine(Path.GetTempPath(), "dtk-v2-" + Guid.NewGuid().ToString("N"));
@@ -55,7 +58,7 @@ public sealed class ProtocolCompatibilityTests
     }
 
     [Fact]
-    public void DesktopLoginUsesANewWireVersion() => Assert.Equal(5, WireProtocol.Version);
+    public void ManagementAndHostingUseANewWireVersion() => Assert.Equal(7, WireProtocol.Version);
 
     private static async Task<Stream> ConnectAsync(LocalPaths paths, CancellationToken cancellation)
     {
