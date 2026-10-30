@@ -34,7 +34,7 @@ glibc and are not Alpine/musl packages.
 
 Closing the window keeps it in the notification area when supported and enabled.
 Use the logo icon to reopen it or choose **Encerrar tudo** to stop the agent,
-tunnels and optional local proxy. Launching the app again focuses the existing
+client tunnels, hosted services and optional local proxy. Launching the app again focuses the existing
 instance. On Linux without a supported tray host, use **Configurações > Encerrar
 tudo** or `cli/DevTunnelToolkit.Cli agent stop` (`.exe` on Windows).
 Agent-only startup remains headless.
@@ -43,6 +43,21 @@ The optional **Proxy e PAC** page configures ordered host/IP/CIDR and port rules
 explicit direct fallback and generated/manual PAC. A fixed local HTTP proxy
 (default `127.0.0.1:8888`) supports clients without PAC. System proxy settings
 are never changed automatically; TLS is not intercepted.
+
+**DevTunnel** manages server resources, ports, access rules and scoped share
+tokens. Deleting there is different from removing a local client profile. Confirm
+the exact remote target before destructive actions; cancellation cannot undo a
+server change that has already been applied.
+
+**Serviços** starts independent loopback HTTP/CONNECT and SOCKS5 proxies. Configure
+their listening ports, destination/CONNECT ports, ordered allow/deny rules and
+limits without needing a Dev Tunnel account. **DevTunnel** binds these services
+or existing local TCP ports to a remote tunnel. Preparing missing remote ports is
+a separate confirmed step. Stopping a publication does not stop its services or
+delete the remote tunnel. Stopping a service revokes only its bindings; restart
+the publication after restarting that service. Referenced services must be
+unlinked before removal. The host computer must remain online.
+**Conexões** consumes remote tunnels rather than publishing local services.
 
 ## Optional startup
 
@@ -81,8 +96,10 @@ layout when updating. Stop the agent and close the desktop before replacing
 files; account/configuration data remains outside the installation directory.
 
 Back up the private state directory with the agent stopped before upgrading.
-This version reads schema 1/2 and marks state as schema 3 on save. Older agents
-reject schema 3; downgrading requires a pre-upgrade backup.
+This version reads schema 1/2/3/4 and marks state as schema 5 on save. Legacy proxy
+listeners become independent services and retain explicit publication bindings.
+Older agents reject schema 5; downgrading requires a pre-upgrade backup. IPC
+version 7 also prevents an older interface from silently losing service settings.
 
 Always update the desktop, agent and CLI together. If the interface reports an
 incompatible agent, stop the previous `DevTunnelToolkit.Agent` process (this

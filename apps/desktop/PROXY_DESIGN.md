@@ -1,48 +1,41 @@
-# Local proxy assessment
+# Desktop proxy roles
 
-The desktop currently maps remote TCP ports to loopback listeners. If a tunnel
-hosts Squid or Tinyproxy on port 3140, mapping that port to local 3140 already
-gives applications a local HTTP/CONNECT proxy. The PAC server can select a mapped
-remote HTTP or SOCKS5 proxy by destination domain. The desktop does not run a
-proxy server today.
+The Desktop offers two separate proxy functions. Neither is a VPN, transparent
+system-wide redirector or complete Squid replacement. Applications must use an
+HTTP/SOCKS proxy or a mapped TCP port explicitly.
 
-Starting a new proxy on the desktop is feasible, but it changes the egress
-point: a proxy that connects directly to destinations uses the desktop's own
-network. It does **not** gain the network reachability of the tunnel host.
-Remote-network access still needs a remote proxy forwarded through a tunnel, or
-another explicit remote egress service.
+| Role | Personal selective proxy | Managed proxy service |
+| --- | --- | --- |
+| Purpose | Route this computer's applications | Offer this computer's permitted network access locally or through explicit tunnel bindings |
+| Interface | Proxy e PAC | Serviços; optional publication in DevTunnel |
+| Ingress | Loopback HTTP/CONNECT, optional PAC | Independent loopback HTTP/CONNECT or SOCKS5 listener |
+| Routing | Ordered Direct/Tunnel/Block rules | Ordered enabled Allow/Deny rules, default deny, optional explicit public-destination fallback |
+| Tunnel failure | Per-rule direct fallback opt-in | Service stays running; publication reconnects independently; no route fallback |
+| Egress | Local network or selected connected upstream | Hosting computer's network |
+| Remote access | Not automatically published | Optional bindings through private tunnel and port access only |
 
-## Recommended addition
+Existing remote Squid/Tinyproxy services remain usable as client upstreams.
+Hosting a new proxy does not grant additional network reachability: destinations
+must already be reachable from the Desktop host. See [remote management and
+hosting](REMOTE_HOSTING.md) for setup and [the security model](SECURITY.md) for
+destination, identity and lifecycle boundaries.
 
-For clients that cannot use PAC, add an opt-in, cross-platform local HTTP proxy
-gateway owned by the agent. It would listen on `127.0.0.1` at a configurable
-port, defaulting to 3140, and route requests by destination host to the selected
-remote proxy mapping. A remote port mapped by the SDK must use a different local
-port to avoid a loop. The gateway must fail closed for configured private routes
-whose tunnel is unavailable. Direct internet egress would be a separate explicit
-choice, never an implicit fallback.
+HTTP forwarding uses Titanium.Web.Proxy without TLS interception or OS proxy
+integration. The published CONNECT path is raw TCP, including non-TLS and
+server-first protocols; the SOCKS5 path permits TCP CONNECT only. Published-proxy
+policy checks DNS results and pins an allowed destination address. Protocol and
+SDK adapters have local integration tests; these do not replace authorized live
+relay and native-platform validation before a release.
 
-The first scope should be HTTP CONNECT and ordinary HTTP forwarding without TLS
-interception or caching. It is not a full Squid replacement. SOCKS5 as a local
-listener can follow, sharing the same route policy; forwarding an already-hosted
-remote SOCKS5 service requires no new protocol server. Tinyproxy exposes an HTTP
-proxy and supports SOCKS5 as an **upstream**, not as its local listener. A bundled
-Squid or Tinyproxy subprocess would need separate platform packaging, process
-lifecycle, configuration and security gates. Squid can run on Windows but its
-Windows build has limitations, so embedding a small managed gateway is a better
-cross-platform fit for this narrow use case.
+Three port concepts remain separate: the service's local listening port, allowed
+destination ports, and the published remote tunnel port. General destination
+ports apply to all proxy requests. CONNECT ports add a restriction for HTTP
+CONNECT and SOCKS5 TCP CONNECT. Empty port filters preserve the legacy unrestricted
+port selection within an otherwise matching destination rule. Lists and inclusive
+ranges are supported. The first matching enabled rule decides; an explicit deny
+cannot be bypassed by a later allow or by the allow-all fallback. Private and
+loopback access still require a matching explicit allow rule. Metadata/link-local
+addresses remain blocked even when a broad allow rule is present.
 
-Security requirements: loopback-only binding; explicit route and port allowlists;
-bounded headers, connections, buffers and timeouts; no request bodies or
-credentials in logs; no arbitrary command or configuration endpoint; no bypass
-on upstream failure; hostname matching before routing; and verification that
-private names are resolved by the intended remote proxy rather than local DNS.
-The trust boundary remains the current OS user, not a multi-user proxy service.
-
-Acceptance tests should cover two simultaneous remote proxies, route selection,
-no-direct fallback, connection loss/recovery, DNS behavior, oversized/invalid
-requests, HTTP CONNECT byte streams and native Windows/Linux runtime behavior.
-
-References: [Dev Tunnels TCP forwarding](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/cli-commands),
-[Tinyproxy](https://tinyproxy.github.io/),
-[Squid on Windows](https://wiki.squid-cache.org/KnowledgeBase/Windows).
+These are the access-policy controls relevant to the Hub use case, not support
+for importing arbitrary squid.conf, Squid caching, SSL Bump or external helpers.

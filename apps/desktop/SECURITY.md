@@ -13,7 +13,8 @@ as that user, a debugger, an administrator, or a compromised desktop keyring.
 - Reparse points/symlinks are rejected for private paths and SQLite sidecars.
   Secrets are written using private temporary files and atomic replacement.
 - Request frames are limited to 1 MiB and responses to 16 MiB. There are 32 IPC
-  slots, 50 accounts, 200 profiles and 100 configured mappings per profile.
+  slots, 50 accounts, 200 client profiles, 100 host profiles and 100 configured
+  mappings per profile. A remote deletion batch contains at most 25 explicit targets.
 - Unknown operations and invalid model values fail closed. Extra JSON properties
   do not become commands, and user-supplied identity metadata is discarded.
   There is no shell endpoint.
@@ -28,6 +29,10 @@ as that user, a debugger, an administrator, or a compromised desktop keyring.
   secret to its directory scope and reference. Key loss is not recoverable.
 - Secrets are never serialized into snapshots, logs or profile exports. Raw SDK
   exceptions and HTTP bodies are not emitted to user-visible logs.
+- Explicit remote-token issuance returns a scoped secret only to the same-user
+  requester. Reveal/copy requires a UI action; the CLI hides it unless
+  `--show-token` is present. Closing the dialog drops its reference. Clipboard
+  contents and copied tokens are then the user's responsibility.
 - Device codes are transient; native providers report deadlines, while the CLI
   currently does not report one to this interface. Browser launch allows only the
   explicitly recognized HTTPS identity-provider hosts, without arbitrary schemes.
@@ -61,6 +66,45 @@ PAC endpoint and through same-user IPC/settings exports.
 Tray activation uses a separate same-user pipe/private Unix socket and accepts
 only a focus signal, not commands or filenames. Agent shutdown uses versioned
 same-user IPC and does not kill unrelated processes or the official CLI.
+
+## Remote management and published proxies
+
+Remote operations are typed requests, not an arbitrary CLI/shell endpoint. The
+selected account must have the service's required permissions. Deletion, ACL
+reset/removal and remote-port preparation require explicit target confirmation.
+In-use resources in this agent must be stopped before changing ports, access or
+HTTP options. Other devices cannot be stopped by this guard. Deleting a remote
+resource is irreversible here; cancelling a request is not an undo operation.
+
+Published HTTP/CONNECT and SOCKS5 listeners have independent policies, default
+deny and explicit remote ports. Tunnel and port anonymous access is rejected
+before hosting and rechecked for new connections. This is not an atomic lock on
+server ACLs or token revocation: permissions changed outside this agent may take
+effect between checks; existing streams require stopping the host to terminate.
+Private egress needs explicit permission; loopback additionally requires an
+IP/CIDR rule. Metadata/link-local destinations and the proxy's own listeners are
+blocked. DNS results are checked and connections pinned to an allowed IP.
+There is no automatic direct fallback, TLS interception or UDP/BIND support.
+
+The allowed remote client gains the hosting computer's reachability for permitted
+destinations, not the Hub's network. Keep policies narrow. Tunnel authentication
+does not identify an individual HTTP request to the proxy; logs attribute events
+to the managed service, not an asserted remote username. A shared loopback listener
+does not prove which tunnel originated an HTTP request; no tunnel/user identity
+is inferred from its peer address.
+
+Service lifetimes are independent of publications. Bindings pin the running
+service generation; stopping that service revokes its bindings and active
+connections. Restart the publication after restarting the service. Other ports
+remain available. An old binding must never connect to a different process that
+reuses the service's former local port. Services must be stopped before changing
+their listener/policy, so existing traffic cannot silently retain the old policy.
+Removing a referenced service is rejected until its bindings are removed.
+
+Access rules are evaluated in order; the first enabled matching rule wins.
+General destination-port restrictions and CONNECT-specific restrictions are
+additional gates. Explicit allow-all is limited to public addresses, without
+weakening private-address, loopback, link-local or metadata safeguards.
 
 ## Limitations and operational requirements
 

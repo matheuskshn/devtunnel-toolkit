@@ -45,6 +45,7 @@ try {
     & $cli --data-dir $dataDirectory agent stop | Out-Null
     if ($LASTEXITCODE -ne 0 -or -not $restart.WaitForExit(10000)) { throw 'Restarted agent did not shut down gracefully.' }
     Write-Output 'Windows named-pipe smoke passed: both CLI providers, persistence after restart and graceful shutdown. No login or remote operations.'
+    & (Join-Path $PSScriptRoot 'test-native-services.ps1') -PackageDirectory $PackageDirectory
 }
 finally {
     foreach ($ownedProcess in @($process, $restart)) {

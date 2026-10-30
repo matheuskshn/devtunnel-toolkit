@@ -33,11 +33,23 @@ Timeout messages do not imply that an already accepted background operation stop
 - Optional selective HTTP/CONNECT proxy with domain/IP/CIDR and port rules.
 - Editable PAC rules, local-proxy mode and imported/manual PAC scripts.
 - Per-user startup where the platform supports it.
+- Remote tunnel/port management, access controls, scoped tokens and explicit batch deletion.
+- Independent HTTP/CONNECT and SOCKS5 services with configurable loopback ports,
+  ordered access rules, limits, logs and optional startup without a tunnel account.
+- Tunnel publications bind an existing managed service or an explicit local TCP port.
+- Separate service/publication progress, reconnect controls and notification-area actions.
 
-This application connects existing tunnels. It does not create, delete or change
-remote resources or replace the Hub. Its optional HTTP/CONNECT proxy routes via
-direct TCP or a connected HTTP/SOCKS5 upstream. It never intercepts TLS and does
-not provide a local SOCKS5 server. Existing TCP mappings remain independent.
+Connecting and removing a local profile never create or delete a remote resource.
+**Conexões** consumes remote tunnels; **Serviços** runs local proxies independently.
+**DevTunnel** manages server resources and publications of local services/ports.
+Preparing missing remote ports is a separate confirmed action. Stopping a publication
+does not stop its services. See [remote management and services](REMOTE_HOSTING.md).
+
+The personal HTTP/CONNECT proxy routes via direct TCP or a connected HTTP/SOCKS5
+upstream. A published proxy instead uses the hosting computer's network and its
+own default-deny destination policy. Neither intercepts TLS. Hosting adds a
+dedicated SOCKS5 TCP CONNECT listener; UDP/BIND, caching and full Squid feature
+parity are not provided. Existing client mappings remain independent.
 
 ## Run from source
 
@@ -118,7 +130,9 @@ Entra error codes, never raw CLI output or credentials. The application
 checks the CLI identity before and after issuing a tunnel-scoped `connect` token;
 the official SDK still owns relay streams and local port mappings. It never
 reads the CLI's undocumented credential cache, stores its login token or passes
-the scoped token through process arguments or IPC. The CLI does not disclose a
+internal connect/host/manage tokens through process arguments or IPC. Explicitly
+issued share tokens are a separate opt-in operation, returned only to the requesting
+same-user UI/CLI, not snapshots or persisted state. The CLI does not disclose a
 reliable login expiry, so the UI reports it as unknown.
 
 The CLI's OS-keychain login is shared with other CLI consumers, not isolated per
@@ -139,8 +153,9 @@ actual organization before deployment.
 A scoped connect token can instead be stored using a `TunnelToken` account and
 the CLI's `account import-token ACCOUNT_ID --token-stdin` command. Such accounts
 adopt a specific tunnel manually; they do not enumerate account-owned tunnels.
-Supply the token through redirected stdin, never argv. Tokens cannot be revealed
-or exported by this application's IPC API.
+Supply the token through redirected stdin, never argv. Stored account credentials
+cannot be revealed or exported by this application's IPC API. The separate remote
+token command issues scoped share tokens, with explicit reveal/copy controls.
 
 `AuthenticatedAt` is a successful login time. `ExpiresAt`, when supplied by the
 provider, is the access credential's expiry, not a guarantee of session lifetime
@@ -321,8 +336,7 @@ startup executor. The application never copies that key into a startup entry.
 
 LAN/WSL exposure, firewall changes, automatic system proxy application, tray
 notifications, privileged helpers and automatic updates are not implemented.
-They are not silently approximated by shell commands. Remote resource management
-is also outside this client preview.
+They are not silently approximated by shell commands.
 
 ## Development and packaging
 
@@ -352,9 +366,9 @@ Windows executable and installer branding is derived from the approved logos in
 generated `packaging/branding/` assets. Main and dialog window icons also follow
 the desktop's light, dark and high-contrast themes.
 
-The desktop, CLI and agent must come from a compatible package. IPC schema v2
-introduces the CLI-backed account providers. Older agents are rejected with an
-actionable update message before account payloads are dispatched. No agent is
+The desktop, CLI and agent must come from a compatible package. IPC version 7
+adds independent services and publication bindings. Incompatible agents are
+rejected with an actionable update message before requests are dispatched. No agent is
 silently terminated because it may own active tunnels. The native Windows smoke
 test uses a temporary isolated workspace, saves both CLI providers and verifies
 persistence after restarting its own agent, without logging in or changing
