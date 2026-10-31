@@ -566,6 +566,9 @@ recovery and the distinction between image publication and deployment acceptance
 
 ## Security notes
 
+- Toolkit and Hub host the unchanged Dev Tunnels CLI application on a separately
+  pinned .NET 10.0.14 runtime. The build verifies both sources and excludes the
+  vendor bundle's old runtime. See [runtime servicing and provenance](images/hub/README.md#cli-runtime-servicing).
 - Squid and OpenVPN are bound to `127.0.0.1` on the host; Dev Tunnels exposes those local ports.
 - The selective route proxy is bound to client loopback and must not be exposed
   through Dev Tunnels or published on a non-loopback interface.

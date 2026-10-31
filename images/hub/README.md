@@ -584,6 +584,38 @@ not implement that restriction. The repository does not suppress this warning.
 
 ## Local verification and release gates
 
+### CLI runtime servicing
+
+The image runs the unchanged Microsoft Dev Tunnels CLI application assemblies
+with the separately pinned .NET 10.0.14 framework. The vendor's 1.0.2115 bundle
+contains a trimmed 10.0.12 framework; installing another runtime beside that
+self-contained executable would leave its original runtime active.
+
+The build verifies the vendor bundle's SHA-256 and the official runtime archive's
+SHA-512, reads the documented .NET bundle format, and retains application and
+third-party files byte for byte. It excludes the entire old runtime inventory,
+creates framework-dependent runtime/dependency configuration, and rejects any
+application-local assembly that would shadow the new framework. This is Toolkit
+packaging of vendor object code, not a rebuild of the vendor's application.
+Both Toolkit and Hub images use the same packaging recipe.
+
+`/opt/devtunnel/evidence/packaging.json` records source hashes, retained-file hashes,
+excluded-runtime hashes and installed runtime identity. The official runtime's
+license and third-party notices are retained under `/opt/devtunnel/dotnet`.
+No old vendor executable or old framework assembly is shipped. The build and
+container smoke verify which CoreCLR is actually loaded; normal image scans remain
+enabled. Authentication, CLI compatibility and native architecture tests remain
+release gates.
+
+Update `bin/devtunnel-runtime.json` and the packaging checks together when upstream
+changes the CLI bundle or framework. Unknown layouts and changed source hashes
+fail closed. Update images through their build pipeline; the unprivileged Hub
+cannot replace the root-owned CLI launcher with an interactive CLI update.
+
+References: [.NET deployment models](https://learn.microsoft.com/en-us/dotnet/core/deploying/),
+[`dotnet exec` configuration](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet),
+[bundle layout](https://github.com/dotnet/runtime/blob/main/src/installer/managed/Microsoft.NET.HostModel/Bundle/Manifest.cs).
+
 ### Native packager coverage
 
 `npm run test:coverage` includes unexecuted native JavaScript in its inventory.

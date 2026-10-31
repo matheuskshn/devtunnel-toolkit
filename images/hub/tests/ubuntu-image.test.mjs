@@ -40,7 +40,9 @@ test("Default Ubuntu LTS and compatibility Dockerfiles have identical build and 
   );
   assert.match(candidate, /^FROM ubuntu:26\.04@sha256:[a-f0-9]{64}$/m);
   assert.match(candidate, /libicu78/);
-  assert.doesNotMatch(candidate, /libicu76|trusted=yes|allow-unauthenticated/);
+  assert.doesNotMatch(candidate, /trusted=yes|allow-unauthenticated/);
+  const runtime = candidate.slice(candidate.lastIndexOf("FROM ubuntu:26.04"));
+  assert.doesNotMatch(runtime, /libicu76/);
   assert.match(
     candidate,
     /apt-get update && sh \/tmp\/use-gnu-coreutils validate-plan\s+\\\n\s+&& apt-get install -y --no-install-recommends --allow-remove-essential\s+\\\n\s+coreutils-from-gnu coreutils-from-uutils- rust-coreutils-\s+\\\n\s+&& sh \/tmp\/use-gnu-coreutils verify-installed/,
@@ -66,9 +68,10 @@ test("Default Ubuntu LTS and compatibility Dockerfiles have identical build and 
     candidate.split("COPY --from=build /usr/local/bin/node").at(-1),
     baseline.split("COPY --from=build /usr/local/bin/node").at(-1),
   );
-  const cli =
-    /RUN case "\$\{TARGETARCH\}"[\s\S]*?&& apt-get purge -y --auto-remove curl/;
-  assert.equal(candidate.match(cli)?.[0], baseline.match(cli)?.[0]);
+  assert.match(candidate, /AS cli\n/);
+  assert.match(candidate, /install-managed-cli\.mjs/);
+  assert.match(candidate, /COPY --from=cli \/out\/ \/opt\/devtunnel\//);
+  assert.doesNotMatch(candidate, /DOTNET_BUNDLE_EXTRACT_BASE_DIR/);
 });
 
 test("native rebuild uses pinned sources, upstream regressions and registered packages", async () => {

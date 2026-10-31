@@ -1,6 +1,16 @@
 # syntax=docker/dockerfile:1.7
 
 FROM node:24-trixie-slim@sha256:6950b66b4c0cb0151ce89fa75074673850763d096b044f422c6729b588dd4956 AS node-build
+
+FROM node:24-trixie-slim@sha256:6950b66b4c0cb0151ce89fa75074673850763d096b044f422c6729b588dd4956 AS cli
+ARG TARGETARCH
+ARG DEVTUNNEL_ENV=prod
+ARG DEVTUNNEL_VERSION=1.0.2115
+ARG DEVTUNNEL_SHA256
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libicu76
+COPY images/hub/bin/managed-cli.mjs images/hub/bin/install-managed-cli.mjs images/hub/bin/devtunnel-runtime.json /build-tools/
+RUN node /build-tools/install-managed-cli.mjs "$TARGETARCH" "$DEVTUNNEL_VERSION" "$DEVTUNNEL_SHA256" "$DEVTUNNEL_ENV"
+
 # Use the same source-verified library recipe as the Hub, compiled for Ubuntu's ABI.
 FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d AS native
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -26,11 +36,6 @@ RUN sh /build-tools/build-native-libraries package
 
 FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d
 
-ARG TARGETARCH
-ARG DEVTUNNEL_ENV=prod
-ARG DEVTUNNEL_VERSION=1.0.2115
-ARG DEVTUNNEL_SHA256
-
 LABEL org.opencontainers.image.title="devtunnel-toolkit" \
       org.opencontainers.image.description="Developer toolkit for Microsoft Dev Tunnels" \
       org.opencontainers.image.source="https://github.com/matheuskshn/devtunnel-toolkit" \
@@ -41,34 +46,17 @@ RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
-        curl \
         dbus-x11 \
         gnome-keyring \
         libicu78 \
+        libssl3t64 \
         libsecret-1-0 \
         systemd-standalone-sysusers \
         tini \
     && rm -rf /var/lib/apt/lists/*
 
-RUN set -eux; \
-    case "${TARGETARCH:-amd64}" in \
-        amd64) devtunnel_arch="x64"; devtunnel_checksum=723d6aebdc226064aef321258fb17c8a2770c9cc2bd05004c0fb83e72b302c3f ;; \
-        arm64) devtunnel_arch="arm64"; devtunnel_checksum=b537f270a55d57f23b7621cec0b09806aa9ada119713b33e9255284179b76bde ;; \
-        *) echo "Unsupported TARGETARCH: ${TARGETARCH:-unknown}" >&2; exit 1 ;; \
-    esac; \
-    test "$DEVTUNNEL_ENV" = prod || test -n "$DEVTUNNEL_SHA256"; \
-    curl --fail --silent --show-error --location \
-       --retry 3 --connect-timeout 15 --max-time 180 --proto '=https' --tlsv1.2 \
-        -o /usr/local/bin/devtunnel \
-        "https://tunnelsassets${DEVTUNNEL_ENV}.blob.core.windows.net/cli/linux-${devtunnel_arch}-devtunnel"; \
-    echo "${DEVTUNNEL_SHA256:-$devtunnel_checksum}  /usr/local/bin/devtunnel" | sha256sum -c -; \
-    chmod +x /usr/local/bin/devtunnel; \
-    DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp/devtunnel-check devtunnel --version | grep -F "$DEVTUNNEL_VERSION"; \
-    mkdir -p /usr/local/share/devtunnel; \
-    find /tmp/devtunnel-check -name devtunnel.deps.json \
-       -exec cp '{}' /usr/local/share/devtunnel/devtunnel.deps.json \;; \
-    rm -rf /tmp/devtunnel-check; \
-    apt-get purge -y --auto-remove curl
+COPY --from=cli /out/ /opt/devtunnel/
+COPY --chmod=755 images/hub/bin/devtunnel-cli /usr/local/bin/devtunnel
 
 RUN --mount=type=bind,source=images/hub/bin/use-gnu-coreutils,target=/tmp/use-gnu-coreutils \
     apt-get update && sh /tmp/use-gnu-coreutils validate-plan \

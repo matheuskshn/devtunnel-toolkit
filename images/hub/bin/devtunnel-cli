@@ -1,0 +1,3 @@
+#!/bin/sh
+# The managed application is vendor code; the framework is independently serviced.
+exec /opt/devtunnel/dotnet/dotnet exec /opt/devtunnel/cli/devtunnel.dll "$@"
