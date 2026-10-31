@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Threading.Channels;
 using DevTunnelToolkit.Core;
@@ -359,13 +360,25 @@ public sealed partial class AgentRuntime(IStateStore store, ICredentialVault vau
                 try
                 {
                     SetStatus(new(profile.Id, ConnectionState.Discovering, RetryCount: retries));
-                    var remote = await tunnels.GetAsync(account, profile, cancellationToken);
+                    DiscoveredTunnel remote;
+                    using (var discovery = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+                    {
+                        discovery.CancelAfter(TimeSpan.FromSeconds(30));
+                        try { remote = await tunnels.GetAsync(account, profile, discovery.Token); }
+                        catch (OperationCanceledException error) when (!cancellationToken.IsCancellationRequested)
+                        {
+                            var timeout = new ToolkitException("TUNNEL_DISCOVERY_TIMEOUT");
+                            timeout.Data["CliStage"] = ConnectionFailureStage(error, "discovery");
+                            throw timeout;
+                        }
+                    }
                     await UpdateAuthenticationObservationAsync(account.Id, false, cancellationToken);
                     var requested = ResolveMappings(profile, remote);
                     if (requested.Length == 0) throw new ToolkitException("NO_PORTS_SELECTED");
                     SetStatus(new(profile.Id, ConnectionState.Connecting, RetryCount: retries, Phase: "relay"));
                     await using var relay = await tunnels.ConnectAsync(account, profile, cancellationToken);
                     var disconnected = new TaskCompletionSource<ConnectionState>(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var channelFailed = 0;
                     relay.StateChanged += stateValue =>
                     {
                         if (stateValue is ConnectionState.Stopped or ConnectionState.Failed or ConnectionState.AuthenticationRequired) disconnected.TrySetResult(stateValue);
@@ -374,25 +387,53 @@ public sealed partial class AgentRuntime(IStateStore store, ICredentialVault vau
                     };
                     SetStatus(new(profile.Id, ConnectionState.Connecting, RetryCount: retries, Phase: "mapping"));
                     await using var mapping = await MappedConnection.StartAsync(relay, requested, cancellationToken);
+                    mapping.DataPathFailed += () => { Interlocked.Exchange(ref channelFailed, 1); disconnected.TrySetResult(ConnectionState.Failed); };
+                    if (relay.State is ConnectionState.Failed or ConnectionState.Stopped or ConnectionState.AuthenticationRequired)
+                        disconnected.TrySetResult(relay.State);
                     profile = await SaveEffectiveMappingsAsync(profile, requested, mapping.Ports, cancellationToken);
                     var connectedAt = DateTimeOffset.UtcNow;
-                    SetStatus(new(profile.Id, ConnectionState.Connected, connectedAt, retries, Ports: [.. mapping.Ports], TunnelExpiresAt: remote.ExpiresAt));
+                    SetStatus(new(profile.Id, ConnectionState.Connected, connectedAt, retries, Ports: [.. mapping.Ports], TunnelExpiresAt: remote.ExpiresAt)
+                    { MetadataVerifiedAt = connectedAt });
                     Log("Information", "TUNNEL_CONNECTED", "Tunnel connected and local listeners ready.", profile.Id);
+                    var proxyFailures = 0;
+                    var connectedClock = Stopwatch.StartNew();
+                    var metadataClock = Stopwatch.StartNew();
+                    var proxyClock = Stopwatch.StartNew();
                     while (!cancellationToken.IsCancellationRequested)
                     {
-                        var interval = TimeSpan.FromSeconds(Snapshot().Settings.DiscoveryIntervalSeconds);
-                        await Task.WhenAny(Task.Delay(interval, cancellationToken), disconnected.Task);
+                        var metadataInterval = TimeSpan.FromSeconds(Snapshot().Settings.DiscoveryIntervalSeconds);
+                        var proxyInterval = TimeSpan.FromSeconds(Math.Min(15, metadataInterval.TotalSeconds));
+                        var checkProxy = ProxyHealthTargets(profile).Length > 0;
+                        var remaining = metadataInterval - metadataClock.Elapsed;
+                        if (checkProxy && proxyInterval - proxyClock.Elapsed < remaining) remaining = proxyInterval - proxyClock.Elapsed;
+                        // Timers may fire just before their requested deadline. Retry
+                        // the remaining milliseconds, rather than skipping a full interval.
+                        if (remaining < TimeSpan.FromMilliseconds(1)) remaining = TimeSpan.FromMilliseconds(1);
+                        await Task.WhenAny(Task.Delay(remaining, cancellationToken), disconnected.Task);
                         cancellationToken.ThrowIfCancellationRequested();
                         if (disconnected.Task.IsCompleted)
-                            throw new ToolkitException(await disconnected.Task == ConnectionState.AuthenticationRequired ? "AUTHENTICATION_REQUIRED" : "RELAY_DISCONNECTED");
-                        await relay.RefreshPortsAsync(cancellationToken);
-                        var refreshed = await tunnels.GetAsync(account, profile, cancellationToken);
-                        await UpdateAuthenticationObservationAsync(account.Id, false, cancellationToken);
-                        if (connections.TryGetValue(profile.Id, out var live))
-                            SetStatus(live with { TunnelExpiresAt = refreshed.ExpiresAt });
-                        if (!requested.Select(p => p.RemotePort).Order().SequenceEqual(ResolveMappings(profile, refreshed).Select(p => p.RemotePort).Order()))
-                            throw new ToolkitException("REMOTE_PORTS_CHANGED");
-                        if (DateTimeOffset.UtcNow - connectedAt > TimeSpan.FromMinutes(1)) retries = 0;
+                            throw new ToolkitException(await disconnected.Task == ConnectionState.AuthenticationRequired ? "AUTHENTICATION_REQUIRED" : Volatile.Read(ref channelFailed) != 0 ? "RELAY_CHANNEL_FAILED" : "RELAY_DISCONNECTED");
+                        // Check the data path independently of management API availability.
+                        if (checkProxy && proxyClock.Elapsed >= proxyInterval)
+                        {
+                            var trafficError = await CheckProxyChannelsAsync(profile, mapping, cancellationToken);
+                            proxyClock.Restart();
+                            if (connections.TryGetValue(profile.Id, out var live)) SetStatus(live with { TrafficErrorCode = trafficError });
+                            proxyFailures = trafficError == "TUNNEL_PROXY_UNRESPONSIVE" ? proxyFailures + 1 : 0;
+                            if (proxyFailures >= 2) throw new ToolkitException("TUNNEL_PROXY_UNRESPONSIVE");
+                        }
+                        else if (!checkProxy)
+                        {
+                            proxyFailures = 0;
+                            if (connections.TryGetValue(profile.Id, out var live) && live.TrafficErrorCode is not null)
+                                SetStatus(live with { TrafficErrorCode = null });
+                        }
+                        if (metadataClock.Elapsed >= metadataInterval)
+                        {
+                            await RefreshConnectionMetadataAsync(account, profile, requested, relay, cancellationToken);
+                            metadataClock.Restart();
+                        }
+                        if (connectedClock.Elapsed > TimeSpan.FromMinutes(1)) retries = 0;
                     }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
@@ -401,7 +442,8 @@ public sealed partial class AgentRuntime(IStateStore store, ICredentialVault vau
                     var code = ErrorCode(error);
                     var authRequired = code is "AUTH_REQUIRED" or "AUTHENTICATION_REQUIRED" or "AUTHENTICATION_EXPIRED" or "LOGIN_TOKEN_EXPIRED" or "AUTH_CLIENT_ID_REQUIRED" or "ACCESS_TOKEN_EXPIRED" or "CLI_ACCOUNT_CHANGED";
                     if (authRequired) await UpdateAuthenticationObservationAsync(account.Id, true, cancellationToken);
-                    Log("Warning", code, "Connection interrupted. Check the connection status for the next action.", profile.Id);
+                    var stage = ConnectionFailureStage(error, "relay_or_metadata");
+                    Log("Warning", code, $"Connection interrupted during {stage}. Check the connection status for the next action.", profile.Id);
                     if (authRequired || !profile.Reconnect.Enabled || retries >= profile.Reconnect.MaxRetries || code is "PORT_IN_USE" or "LOCAL_PORT_UNAVAILABLE" or "PORT_RANGE_EXHAUSTED" or "NO_PORTS_SELECTED" or "DUPLICATE_OR_EXCESSIVE_MAPPINGS" or "REMOTE_PORT_NOT_FOUND" or "TUNNEL_ACCESS_DENIED")
                     {
                         SetStatus(new(profile.Id, authRequired ? ConnectionState.AuthenticationRequired : ConnectionState.Failed, RetryCount: retries, ErrorCode: code));

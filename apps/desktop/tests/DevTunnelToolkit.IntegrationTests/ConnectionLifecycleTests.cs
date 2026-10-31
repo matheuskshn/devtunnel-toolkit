@@ -14,6 +14,74 @@ namespace DevTunnelToolkit.IntegrationTests;
 public sealed class ConnectionLifecycleTests
 {
     [Fact]
+    public async Task AnUnresponsiveConfiguredProxyRecoversEvenWhenTheRelayStillReportsConnected()
+    {
+        var service = new ControlledTunnelService { StreamFailure = attempt => attempt == 1 ? new IOException("synthetic stalled channel") : null };
+        await using var fixture = await LifecycleFixture.CreateAsync(service);
+        var profile = await fixture.SaveTunnelAsync(await fixture.SaveAccountAsync(AccountProvider.GitHub));
+        await fixture.CommandAsync("settings.save", new AppSettings
+        {
+            DiscoveryIntervalSeconds = 10,
+            Proxy = new() { Enabled = true, Port = AvailablePort(), Rules = [new() { Destination = "fixture.invalid", Action = RouteAction.Tunnel, ProfileId = profile.Id, RemotePort = 3140 }] }
+        });
+        await fixture.CommandAsync("tunnel.connect", new { id = profile.Id });
+        var initial = await WaitForAsync(fixture, profile.Id, c => c.State == ConnectionState.Connected);
+        var old = service.Latest(profile.Id);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(35));
+        while (fixture.Status(profile.Id).TrafficErrorCode is null) await Task.Delay(20, timeout.Token);
+        Assert.Equal(ConnectionState.Connected, old.State);
+        Assert.Equal("TUNNEL_PROXY_UNRESPONSIVE", fixture.Status(profile.Id).TrafficErrorCode);
+        while (service.Attempts(profile.Id) < 2 || fixture.Status(profile.Id).State != ConnectionState.Connected)
+            await Task.Delay(20, timeout.Token);
+        Assert.True(old.Disposed);
+        Assert.Equal(Assert.Single(initial.Ports!).LocalPort, Assert.Single(fixture.Status(profile.Id).Ports!).LocalPort);
+        await TunnelProxyHealth.CheckAsync(service.Latest(profile.Id), 3140, ProxyProtocol.Http, timeout.Token);
+        await AssertEchoAsync(Assert.Single(fixture.Status(profile.Id).Ports!).LocalPort);
+    }
+
+    [Fact]
+    public async Task MetadataFailurePreservesTrafficButAuthenticationFailureStillClosesTheRelay()
+    {
+        Exception? discoveryFailure = null;
+        var service = new ControlledTunnelService { DiscoveryFailure = _ => discoveryFailure };
+        await using var fixture = await LifecycleFixture.CreateAsync(service);
+        await fixture.CommandAsync("settings.save", new AppSettings { DiscoveryIntervalSeconds = 10 });
+        var profile = await fixture.SaveTunnelAsync(await fixture.SaveAccountAsync(AccountProvider.GitHub));
+        await fixture.CommandAsync("tunnel.connect", new { id = profile.Id });
+        var connected = await WaitForAsync(fixture, profile.Id, c => c.State == ConnectionState.Connected);
+        var relay = service.Latest(profile.Id);
+        discoveryFailure = new ToolkitException("CLI_DNS_FAILED");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (fixture.Status(profile.Id).MetadataErrorCode is null) await Task.Delay(20, deadline.Token);
+        Assert.Equal(ConnectionState.Connected, fixture.Status(profile.Id).State);
+        Assert.Equal("CLI_DNS_FAILED", fixture.Status(profile.Id).MetadataErrorCode);
+        Assert.False(relay.Disposed);
+        Assert.Equal(1, service.Attempts(profile.Id));
+        await AssertEchoAsync(Assert.Single(connected.Ports!).LocalPort);
+        discoveryFailure = new ToolkitException("AUTHENTICATION_EXPIRED");
+        try { while (fixture.Status(profile.Id).State != ConnectionState.AuthenticationRequired) await Task.Delay(20, deadline.Token); }
+        catch (OperationCanceledException)
+        {
+            Assert.Fail(JsonSerializer.Serialize(new { Connection = fixture.Status(profile.Id), relay.Disposed, Discoveries = service.Discoveries(profile.Id), Logs = fixture.Runtime.Snapshot().Logs.TakeLast(8) }));
+        }
+        Assert.True(relay.Disposed);
+        Assert.Equal(1, service.Attempts(profile.Id));
+    }
+
+    [Fact]
+    public async Task ADisconnectionBeforeTheSubscriptionIsObservedAndRecovered()
+    {
+        var service = new ControlledTunnelService { InitialState = attempt => attempt == 1 ? ConnectionState.Failed : ConnectionState.Connected };
+        await using var fixture = await LifecycleFixture.CreateAsync(service);
+        var profile = await fixture.SaveTunnelAsync(await fixture.SaveAccountAsync(AccountProvider.GitHub));
+        await fixture.CommandAsync("tunnel.connect", new { id = profile.Id });
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        while (service.Attempts(profile.Id) < 2 || fixture.Status(profile.Id).State != ConnectionState.Connected)
+            await Task.Delay(20, deadline.Token);
+        await AssertEchoAsync(Assert.Single(fixture.Status(profile.Id).Ports!).LocalPort);
+    }
+
+    [Fact]
     public async Task UnavailableStartupStatusDoesNotPreventTunnelManagement()
     {
         var service = new ControlledTunnelService();
@@ -350,6 +418,8 @@ public sealed class ConnectionLifecycleTests
         public int RemotePort { get; init; } = 3140;
         public Func<AccountProfile, Exception?>? DiscoveryFailure { get; init; }
         public Func<TunnelProfile, int, Exception?>? ConnectFailure { get; init; }
+        public Func<int, ConnectionState>? InitialState { get; init; }
+        public Func<int, Exception?>? StreamFailure { get; init; }
         public int Attempts(string id) => attempts.GetValueOrDefault(id);
         public int Discoveries(string id) => discoveries.GetValueOrDefault(id);
         public ControlledRelay Latest(string id) => relays[id];
@@ -364,7 +434,7 @@ public sealed class ConnectionLifecycleTests
         {
             var count = attempts.AddOrUpdate(profile.Id, 1, (_, previous) => previous + 1);
             if (ConnectFailure?.Invoke(profile, count) is { } failure) throw failure;
-            var relay = new ControlledRelay();
+            var relay = new ControlledRelay { State = InitialState?.Invoke(count) ?? ConnectionState.Connected, OpeningFailure = () => StreamFailure?.Invoke(count) };
             relays[profile.Id] = relay;
             return Task.FromResult<IRelayConnection>(relay);
         }
@@ -376,9 +446,12 @@ public sealed class ConnectionLifecycleTests
         private readonly ConcurrentBag<Task> clients = [];
         public event Action<ConnectionState>? StateChanged;
         public bool Disposed { get; private set; }
-        public void Emit(ConnectionState state) => StateChanged?.Invoke(state);
+        public ConnectionState State { get; set; } = ConnectionState.Connected;
+        public Func<Exception?>? OpeningFailure { get; init; }
+        public void Emit(ConnectionState state) { State = state; StateChanged?.Invoke(state); }
         public async Task<Stream> OpenStreamAsync(int remotePort, CancellationToken cancellationToken)
         {
+            if (OpeningFailure?.Invoke() is { } failure) throw failure;
             var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             var peer = new TcpClient();
@@ -404,7 +477,14 @@ public sealed class ConnectionLifecycleTests
                     var buffer = new byte[1024];
                     int count;
                     while ((count = await stream.ReadAsync(buffer, cancellationToken)) > 0)
+                    {
+                        if (Encoding.ASCII.GetString(buffer, 0, count).StartsWith("OPTIONS * HTTP/1.1", StringComparison.Ordinal))
+                        {
+                            await stream.WriteAsync(Encoding.ASCII.GetBytes("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"), cancellationToken);
+                            return;
+                        }
                         await stream.WriteAsync(buffer.AsMemory(0, count), cancellationToken);
+                    }
                 }
                 catch (Exception error) when (error is OperationCanceledException or IOException or ObjectDisposedException) { }
             }

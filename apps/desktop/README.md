@@ -21,6 +21,23 @@ closing an editor does not cancel a command already accepted by the agent.
 Authentication distinguishes waiting for the provider from waiting for user input.
 Timeout messages do not imply that an already accepted background operation stopped.
 
+Each connection card provides **Reconectar**, **Autenticar conta** and **Validar
+conta**, including device-code feedback and cancellation without changing pages.
+Account operations use that connection's bound account and may affect other profiles
+sharing the account. Manual reconnect replaces the relay and interrupts existing streams.
+Initial discovery has a 30-second deadline. Subsequent metadata refreshes have a
+20-second budget; transient management/DNS/CLI failures mark metadata stale while
+preserving a connected relay and its local ports. Authentication, identity and port
+policy failures still stop the connection.
+
+Three consecutive failures opening relay channels trigger automatic recovery.
+For ports explicitly selected as proxies by active proxy/PAC rules, the agent also
+checks the HTTP OPTIONS response or SOCKS5 greeting every 15 seconds, with a
+five-second timeout. Two consecutive unresponsive checks trigger reconnection.
+The check does not contact a destination, install certificates or send credentials.
+An HTTP policy denial proves the proxy answered; it does not prove an application
+or its TLS connection works. Protocol mismatches are shown for configuration review.
+
 - Microsoft via official CLI without a custom Client ID, plus native Microsoft,
   GitHub SDK, GitHub CLI and scoped tunnel-token accounts.
 - Owned-tunnel discovery and manual adoption of an accessible canonical Tunnel ID.

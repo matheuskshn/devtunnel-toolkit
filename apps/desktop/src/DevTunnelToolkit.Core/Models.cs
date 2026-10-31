@@ -71,7 +71,13 @@ public sealed record DiscoveredTunnel(string TunnelId, string ClusterId, string?
 }
 public sealed record EffectiveMapping(int RemotePort, string LocalAddress, int LocalPort);
 public sealed record ConnectionStatus(string ProfileId, ConnectionState State, DateTimeOffset? ConnectedAt = null, int RetryCount = 0, DateTimeOffset? NextRetryAt = null, string? ErrorCode = null, EffectiveMapping[]? Ports = null, DateTimeOffset? TunnelExpiresAt = null,
-    DateTimeOffset? OperationStartedAt = null, DateTimeOffset? OperationCompletedAt = null, string? Phase = null);
+    DateTimeOffset? OperationStartedAt = null, DateTimeOffset? OperationCompletedAt = null, string? Phase = null)
+{
+    public string? MetadataErrorCode { get; init; }
+    public DateTimeOffset? MetadataVerifiedAt { get; init; }
+    public DateTimeOffset? ProxyVerifiedAt { get; init; }
+    public string? TrafficErrorCode { get; init; }
+}
 public sealed record LoginChallenge(string VerificationUri, string UserCode, DateTimeOffset? ExpiresAt, string? Message = null);
 public sealed record LoginStatus(string AccountId, string State, LoginChallenge? Challenge = null, string? ErrorCode = null,
     CliLoginMode? RequestedMode = null, DateTimeOffset? StartedAt = null);

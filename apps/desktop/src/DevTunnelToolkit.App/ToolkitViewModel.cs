@@ -281,6 +281,13 @@ public sealed partial class ToolkitViewModel(IToolkitGateway gateway, Action<Act
         OperationCanceledException or TimeoutException => "Tempo de espera esgotado. Consulte o estado atual antes de tentar novamente: uma operação já aceita pode continuar no agente.",
         ToolkitException e => e.Code switch
         {
+            "TUNNEL_DISCOVERY_TIMEOUT" => "A consulta inicial do túnel excedeu 30 segundos. O agente aplicará a política de reconexão; verifique a rede e o DNS deste computador.",
+            "TUNNEL_PROXY_UNRESPONSIVE" => "O relay está conectado, mas o proxy remoto não respondeu. O agente tentará recuperar a conexão se a falha se repetir.",
+            "TUNNEL_CLIENT_LIMIT_REACHED" => "O limite de conexões locais deste túnel foi atingido. A verificação do proxy aguardará uma vaga; as conexões existentes serão preservadas.",
+            "TUNNEL_PROXY_PROTOCOL_INVALID" => "A porta remota não respondeu como o proxy configurado. Revise o protocolo e a porta da regra.",
+            "CLI_DNS_FAILED" => "O CLI não conseguiu resolver o endereço do serviço de túneis. Verifique o DNS e a rede deste computador.",
+            "CLI_NETWORK_FAILED" => "O CLI não conseguiu acessar o serviço de túneis pela rede deste computador.",
+            "CLI_SERVICE_UNAVAILABLE" or "CLI_RATE_LIMITED" => "O serviço de gerenciamento de túneis está temporariamente indisponível. Aguarde a nova tentativa.",
             "REMOTE_WAIT_CANCELLED" => "Espera cancelada. Uma alteração já recebida pelo servidor pode continuar. Consulte o recurso antes de tentar novamente.",
             "REMOTE_CREATED_REFRESH_REQUIRED" => "O recurso foi criado, mas a consulta final não foi concluída. Atualize a lista antes de tentar novamente. Não crie outro túnel automaticamente.",
             "REMOTE_RESOURCE_IN_USE" => "Pare os perfis clientes e a hospedagem local deste túnel antes de alterar portas, permissões ou excluir o recurso.",

@@ -136,6 +136,11 @@ public sealed class CliProcessTests
     [InlineData("AADSTS50076: sample@example.invalid token=fictional-secret", "AUTH_PROVIDER_AADSTS50076")]
     [InlineData("0x800711c7", "EXECUTION_BLOCKED_BY_POLICY")]
     [InlineData("unrecognized private details", "WINDOWS_AUTH_FAILED")]
+    [InlineData("No such host is known; token=fictional-secret", "CLI_DNS_FAILED")]
+    [InlineData("O nome solicitado é válido, mas não foram encontrados dados do tipo solicitado.", "CLI_DNS_FAILED")]
+    [InlineData("network is unreachable", "CLI_NETWORK_FAILED")]
+    [InlineData("HTTP 429 Too Many Requests", "CLI_RATE_LIMITED")]
+    [InlineData("HTTP 503 Service Unavailable", "CLI_SERVICE_UNAVAILABLE")]
     public void DiagnosticsPreserveOnlySafeCategories(string output, string expected)
     {
         var error = OfficialCli.Classify(output, integrated: true);

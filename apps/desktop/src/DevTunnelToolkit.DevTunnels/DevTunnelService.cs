@@ -114,6 +114,12 @@ public sealed class DevTunnelService(IAuthenticationService authentication) : IT
         private readonly TunnelRelayTunnelClient client;
         private readonly TunnelManagementClient management;
         private readonly TraceSource trace;
+        public ConnectionState State => client.ConnectionStatus switch
+        {
+            SdkConnectionStatus.Connected => ConnectionState.Connected,
+            SdkConnectionStatus.Disconnected => ConnectionState.Failed,
+            _ => ConnectionState.Reconnecting
+        };
         public event Action<ConnectionState>? StateChanged;
 
         public RelayConnection(TunnelRelayTunnelClient client, TunnelManagementClient management, TraceSource trace)

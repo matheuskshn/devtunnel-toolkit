@@ -20,6 +20,8 @@ public sealed class MappedConnection : IAsyncDisposable
     private readonly CancellationTokenRegistration stopRegistration;
     private long nextClientId;
     private Task? disposeTask;
+    private int failedOpenings;
+    public event Action? DataPathFailed;
 
     private MappedConnection(IRelayConnection relay, List<(TcpListener Listener, int RemotePort)> listeners,
         MappedConnectionOptions options, CancellationToken cancellationToken)
@@ -38,6 +40,7 @@ public sealed class MappedConnection : IAsyncDisposable
     }
 
     public IReadOnlyList<EffectiveMapping> Ports { get; }
+    public bool AtCapacity { get { lock (sync) return clients.Count >= options.MaxConcurrentClients; } }
 
     public int ActiveClientCount
     {
@@ -170,7 +173,18 @@ public sealed class MappedConnection : IAsyncDisposable
             try
             {
                 opening.CancelAfter(options.OpenStreamTimeout);
-                await using var remote = await relay.OpenStreamAsync(remotePort, opening.Token).ConfigureAwait(false);
+                Stream opened;
+                try
+                {
+                    opened = await relay.OpenStreamAsync(remotePort, opening.Token).ConfigureAwait(false);
+                    Interlocked.Exchange(ref failedOpenings, 0);
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    if (Interlocked.Increment(ref failedOpenings) == 3) DataPathFailed?.Invoke();
+                    throw;
+                }
+                await using var remote = opened;
                 var local = client.GetStream();
                 using var closeOnCancellation = connection.Token.Register(() =>
                 {

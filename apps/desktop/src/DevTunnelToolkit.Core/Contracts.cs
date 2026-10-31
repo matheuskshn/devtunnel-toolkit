@@ -38,6 +38,7 @@ public interface ITunnelService
 
 public interface IRelayConnection : IAsyncDisposable
 {
+    ConnectionState State => ConnectionState.Connected;
     event Action<ConnectionState>? StateChanged;
     Task<Stream> OpenStreamAsync(int remotePort, CancellationToken cancellationToken);
     Task RefreshPortsAsync(CancellationToken cancellationToken);

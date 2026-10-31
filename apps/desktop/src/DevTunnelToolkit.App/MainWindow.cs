@@ -245,7 +245,7 @@ public sealed partial class MainWindow : Window
     private string PageSignature(AgentSnapshot snapshot) => JsonSerializer.Serialize(_currentPage switch
     {
         "Contas" => (object)new { snapshot.Accounts, snapshot.Logins, snapshot.Tunnels, DesktopLogins = snapshot.Accounts.Select(a => _model.IsDesktopLoginActive(a.Id)), _model.DiscoveryAccountId, _model.DiscoveredTunnels },
-        "Conexões" => new { snapshot.Accounts, snapshot.Tunnels, snapshot.Connections, _model.DiscoveryAccountId, _model.DiscoveredTunnels },
+        "Conexões" => new { snapshot.Accounts, snapshot.Logins, snapshot.Tunnels, Connections = snapshot.Connections.Select(c => c with { ProxyVerifiedAt = null }), ProxyVerified = snapshot.Connections.Select(c => c.ProxyVerifiedAt is not null), DesktopLogins = snapshot.Accounts.Select(a => _model.IsDesktopLoginActive(a.Id)), _model.DiscoveryAccountId, _model.DiscoveredTunnels },
         "DevTunnel" => new { snapshot.Accounts, _model.RemoteAccountId, _model.RemoteTunnels, snapshot.Hosts, snapshot.HostStatuses, snapshot.Services, snapshot.ServiceStatuses, snapshot.DiagnosticEcho, snapshot.Tunnels, snapshot.Connections, _devTunnelTab },
         "Serviços" => new { snapshot.Services, snapshot.ServiceStatuses, snapshot.Hosts, snapshot.HostStatuses },
         "Portas" => new { snapshot.Tunnels, snapshot.Connections },
@@ -343,20 +343,29 @@ public sealed partial class MainWindow : Window
             identity.Children.Add(Text(tunnel.CanonicalId, 14, FontWeight.SemiBold));
             identity.Children.Add(Text($"{tunnel.Alias} · {snapshot.Accounts.FirstOrDefault(a => a.Id == tunnel.AccountId)?.DisplayName ?? "Conta indisponível"}", 11, color: "Muted"));
             row.Children.Add(identity);
-            var stateText = Text(StateLabel(state?.State ?? ConnectionState.Stopped), 12, FontWeight.SemiBold, state?.State == ConnectionState.Connected ? "Success" : "Muted");
+            var stateText = Text(state?.TrafficErrorCode is not null ? "Verificar proxy" : StateLabel(state?.State ?? ConnectionState.Stopped), 12, FontWeight.SemiBold, state?.State == ConnectionState.Connected && state.TrafficErrorCode is null ? "Success" : "Muted");
             stateText.VerticalAlignment = VerticalAlignment.Center; Grid.SetColumn(stateText, 1); row.Children.Add(stateText);
             var actions = new WrapPanel { Orientation = Orientation.Horizontal };
             var pending = state is not null && ToolkitViewModel.IsConnectionPending(state.State);
-            var connected = state?.State == ConnectionState.Connected || pending;
+            var connected = state?.State is ConnectionState.Connected or ConnectionState.Degraded || pending;
+            var accountLoginActive = _model.IsDesktopLoginActive(tunnel.AccountId) || snapshot.Logins.Any(l => l.AccountId == tunnel.AccountId && l.State is "Starting" or "Pending" or "AwaitingUser");
             var connect = ActionButton(pending ? "Cancelar conexão" : connected ? "Parar" : "Conectar", async () => await _model.ActionAsync(connected ? "tunnel.stop" : "tunnel.connect", tunnel.Id), !connected);
-            connect.IsEnabled = state?.State != ConnectionState.Stopping;
+            connect.IsEnabled = state?.State != ConnectionState.Stopping && (connected || !accountLoginActive);
             actions.Children.Add(connect);
+            var reconnect = ActionButton("Reconectar", async () => await _model.ActionAsync("tunnel.reconnect", tunnel.Id));
+            reconnect.IsEnabled = !pending && !accountLoginActive && state?.State != ConnectionState.Stopping;
+            actions.Children.Add(reconnect);
             actions.Children.Add(ActionButton("Editar", () => EditTunnelAsync(tunnel)));
             Grid.SetColumn(actions, 2); row.Children.Add(actions);
             var info = new StackPanel { Spacing = 4, Margin = new(0, 9, 0, 0) };
             info.Children.Add(new ActivityPanel(_model, () => _model.TunnelActivity(tunnel.Id)));
             info.Children.Add(Text(state?.Ports is { Length: > 0 } ports ? string.Join("  ·  ", ports.Select(p => $"{p.LocalAddress}:{p.LocalPort} → {p.RemotePort}")) : "Nenhuma porta local ativa", 11, color: "Muted"));
             if (state?.ErrorCode is { } code) info.Children.Add(Text($"Atenção: {code}", 11));
+            if (state?.MetadataErrorCode is not null) info.Children.Add(Text("Consulta de metadados indisponível. A conexão foi preservada; uma nova consulta será feita automaticamente.", 11));
+            if (state?.TrafficErrorCode is { } trafficError) info.Children.Add(Text(ToolkitViewModel.FriendlyError(new ToolkitException(trafficError)), 11));
+            if (state?.ProxyVerifiedAt is not null) info.Children.Add(Text("O proxy respondeu à verificação do canal. O acesso ao destino precisa ser validado separadamente.", 11, color: "Muted"));
+            if (snapshot.Accounts.FirstOrDefault(a => a.Id == tunnel.AccountId) is { } account)
+                info.Children.Add(ConnectionAccountControls(snapshot, account));
             if (state?.NextRetryAt is { } retry) info.Children.Add(Text($"Tentativa {state.RetryCount} · próxima {FormatDate(retry)}", 11, color: "Muted"));
             if (state?.TunnelExpiresAt is { } expires) info.Children.Add(Text($"Recurso remoto expira em {FormatDate(expires)}", 11, color: "Muted"));
             Grid.SetRow(info, 1); Grid.SetColumnSpan(info, 3); row.Children.Add(info);

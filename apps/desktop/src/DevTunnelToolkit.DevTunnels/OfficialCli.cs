@@ -69,8 +69,25 @@ internal sealed class OfficialCli : IOfficialCli
                 throw;
             }
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && Volatile.Read(ref cancelledInWindow) == 0) { throw new ToolkitException("DEVTUNNEL_CLI_TIMEOUT"); }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && Volatile.Read(ref cancelledInWindow) == 0)
+        { throw Diagnostic(new ToolkitException("DEVTUNNEL_CLI_TIMEOUT"), arguments); }
+        catch (OperationCanceledException error) { error.Data["CliStage"] = CliStage(arguments); throw; }
+        catch (ToolkitException error) { throw Diagnostic(error, arguments); }
     }
+
+    private static ToolkitException Diagnostic(ToolkitException error, string[] arguments)
+    {
+        error.Data["CliStage"] = CliStage(arguments);
+        return error;
+    }
+
+    private static string CliStage(string[] arguments) => arguments.FirstOrDefault() switch
+    {
+        "user" when arguments.ElementAtOrDefault(1) == "show" => "identity",
+        "token" => "scoped_token",
+        "list" => "list",
+        _ => "command"
+    };
 
     private static IDisposable? OpenAuthenticationWindow(ProcessStartInfo start, string[] arguments, Action cancel)
     {
@@ -129,6 +146,10 @@ internal sealed class OfficialCli : IOfficialCli
         if (Regex.IsMatch(output, "(?:login token|token|login).*expired", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) return new("AUTHENTICATION_EXPIRED");
         if (Regex.IsMatch(output, "not logged in|unauthorized|sign.in required|AADSTS", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) return new("AUTHENTICATION_REQUIRED");
         if (Regex.IsMatch(output, "tunnel not found", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) return new("TUNNEL_NOT_FOUND");
+        if (Regex.IsMatch(output, "no such host|name.*resolution|could not resolve|nodename nor servname|nome solicitado.*dados|host.*desconhecido|11001|11004", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) return new("CLI_DNS_FAILED");
+        if (Regex.IsMatch(output, "connection refused|network is unreachable|connection.*reset|connection.*timed out|rede.*inacessível|conexão.*recusada", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) return new("CLI_NETWORK_FAILED");
+        if (Regex.IsMatch(output, "\\b429\\b|too many requests", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) return new("CLI_RATE_LIMITED");
+        if (Regex.IsMatch(output, "\\b50[234]\\b|service unavailable|bad gateway", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)) return new("CLI_SERVICE_UNAVAILABLE");
         return new(integrated ? "WINDOWS_AUTH_FAILED" : "DEVTUNNEL_CLI_FAILED");
     }
 }
