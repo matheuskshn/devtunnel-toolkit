@@ -221,7 +221,7 @@ internal sealed class FakeGateway : IToolkitGateway, IDesktopLoginGateway
     public Task<LoginStatus> LoginFromDesktopAsync(string id, CancellationToken cancellationToken)
         => DesktopLogin?.Invoke(id, cancellationToken) ?? throw new ToolkitException("DESKTOP_LOGIN_UNSUPPORTED");
     public Exception? Error { get; set; }
-    public List<(string Operation, object? Payload)> Calls { get; } = [];
+    public System.Collections.Concurrent.ConcurrentQueue<(string Operation, object? Payload)> Calls { get; } = new();
     public AgentSnapshot State { get; set; } = new(
         [new AccountProfile { DisplayName = "Demo account", Provider = AccountProvider.Microsoft, Status = "Authenticated", ClientId = "test-client" }],
         [], [], [], new AppSettings(), new PlatformCapabilities("Test", true, false, false, false), []);
@@ -229,7 +229,7 @@ internal sealed class FakeGateway : IToolkitGateway, IDesktopLoginGateway
     public async Task<T> CallAsync<T>(string operation, object? payload = null, CancellationToken cancellationToken = default)
     {
         if (Error is not null) throw Error;
-        Calls.Add((operation, payload));
+        Calls.Enqueue((operation, payload));
         if (Handler is not null) return (T)await Handler(operation, payload, cancellationToken);
         object response = operation switch
         {
