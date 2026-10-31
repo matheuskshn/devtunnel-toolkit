@@ -393,7 +393,10 @@ public sealed class ProxyTests
     {
         using var key = System.Security.Cryptography.RSA.Create(2048);
         var request = new System.Security.Cryptography.X509Certificates.CertificateRequest("CN=localhost", key, System.Security.Cryptography.HashAlgorithmName.SHA256, System.Security.Cryptography.RSASignaturePadding.Pkcs1);
-        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddMinutes(5));
+        using var generated = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddMinutes(5));
+        // Schannel needs a key container rather than the generated ephemeral CNG key.
+        // Keep the synthetic PFX in memory; disposal removes its temporary key container.
+        using var certificate = System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(generated.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pfx), null);
         using var origin = new TcpListener(IPAddress.Loopback, 0); origin.Start();
         var originPort = ((IPEndPoint)origin.LocalEndpoint).Port; var proxyPort = FreePort();
         var state = Snapshot(new() { Enabled = true, Port = proxyPort });
@@ -418,8 +421,10 @@ public sealed class ProxyTests
                     sawOriginCertificate = presented is not null && presented.GetRawCertData().SequenceEqual(certificate.RawData)
             }
         });
-        Assert.Equal("secure", await http.GetStringAsync($"https://127.0.0.1:{originPort}/fixture", timeout.Token));
-        Assert.True(sawOriginCertificate); await served;
+        var response = http.GetStringAsync($"https://127.0.0.1:{originPort}/fixture", timeout.Token);
+        await Task.WhenAll(served, response);
+        Assert.Equal("secure", await response);
+        Assert.True(sawOriginCertificate);
     }
 
     private static AgentSnapshot TunnelState(int proxyPort, int upstreamPort, string destination, bool fallback)
