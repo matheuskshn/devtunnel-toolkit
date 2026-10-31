@@ -622,6 +622,10 @@ account, host home, Docker socket or runtime data is mounted into the build stag
 
 ### Application checks
 
+Coverage tooling pins patched `glob` and `minimatch` through the `test-exclude`
+override until its upstream dependency ranges include those releases. Run the full
+coverage suite and audit, including development dependencies, when updating it.
+
 ```sh
 cd images/hub
 npm ci --ignore-scripts

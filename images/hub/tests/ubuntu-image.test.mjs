@@ -234,10 +234,20 @@ test("GNU provider verification rejects incomplete replacement and a dirty packa
       '#!/bin/sh\nif test "$TEST_CASE" = dirty; then printf broken; fi\n',
       { mode: 0o755 },
     );
+    // Exercise provider verification independently of the runner's utility provider.
+    for (const utility of [
+      "cp", "mv", "rm", "mkdir", "id", "env", "sort", "sha256sum",
+    ]) {
+      await writeFile(
+        path.join(directory, utility),
+        '#!/bin/sh\nif test "$TEST_CASE" = non-gnu; then printf "utility (uutils coreutils) 1.0\\n"; else printf "utility (GNU coreutils) 9.0\\n"; fi\n',
+        { mode: 0o755 },
+      );
+    }
     const script = fileURLToPath(
       new URL("../bin/use-gnu-coreutils", import.meta.url),
     );
-    for (const state of ["ok", "missing", "rust", "dirty"]) {
+    for (const state of ["ok", "missing", "rust", "dirty", "non-gnu"]) {
       const result = spawnSync("/bin/sh", [script, "verify-installed"], {
         encoding: "utf8",
         timeout: 5000,
