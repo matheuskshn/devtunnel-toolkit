@@ -85,6 +85,10 @@ const actions = {
 const messages = {
   LOGIN_FAILED: "Credenciais inválidas ou provedor indisponível.",
   LOGIN_REQUIRED: "Sua sessão expirou. Entre novamente.",
+  RECONNECT_TIMEOUT: "A nova conexão não ficou pronta a tempo. O serviço tentará restaurar a anterior.",
+  RECONNECT_DATA_PATH_FAILED: "A nova conexão não respondeu ao teste do proxy. O serviço preservará ou tentará restaurar a sessão anterior.",
+  HOST_REPLACED: "Outro host assumiu este túnel. Verifique o executor que deve publicá-lo antes de iniciar novamente.",
+  CREDENTIAL_REPLACEMENT_UNSUPPORTED: "Este armazenamento precisa ser atualizado para permitir reconexão protegida.",
   LOGIN_TOKEN_EXPIRED:
     "O login do Dev Tunnel expirou. Use Conectar ou Reconectar para autenticar novamente.",
   IDENTITY_SCHEMA_UNSUPPORTED:
@@ -741,7 +745,7 @@ function proxyMapping(session) {
 function primaryAction(session) {
   if (["running", "starting"].includes(session.status))
     return ["stop", "stop", "Parar"];
-  if (session.status === "reauth_required")
+  if (session.status === "reauth_required" && session.tunnel_id)
     return ["reconnect", "refresh", "Reconectar"];
   return ["connect", "play", "Conectar"];
 }
@@ -1226,7 +1230,7 @@ async function submitAction(action, id, extra = {}) {
     modal(
       "Autenticar conta do túnel",
       action === "reconnect"
-        ? "Faça novamente o login. O túnel iniciará após validar a mesma identidade."
+        ? "Autentique a mesma conta em uma sessão separada. A sessão atual permanece ativa durante a validação. O relay será trocado após a nova conexão; se a troca falhar, o serviço tentará restaurar a anterior."
         : "Conclua o login quando solicitado. O túnel iniciará automaticamente.",
       `<div data-wait-job="${escapeHtml(job.id)}">${empty("Preparando autenticação", "Aguardando o código de dispositivo. Não feche o serviço.", "key")}</div>`,
     );
@@ -1236,7 +1240,7 @@ function device(job) {
   if (!job?.device) return;
   modal(
     "Autenticar conta do túnel",
-    `${sessionLabelById(job.session)} - código visível somente para quem iniciou.`,
+    `${sessionLabelById(job.session)} - código visível somente para quem iniciou.${job.action === "reconnect" ? " A sessão atual é preservada durante a autenticação e a validação." : ""}`,
     `<div data-wait-job="${escapeHtml(job.id)}" data-device-code="${escapeHtml(job.device.code)}"><div class="note">Abra o site oficial em outra aba e informe o código abaixo. Esta autenticação não altera sua conta do console.</div><a href="${escapeHtml(job.device.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(job.device.url)}</a><button type="button" class="device-code" data-copy-code="${escapeHtml(job.device.code)}" aria-label="Copiar código de autenticação ${escapeHtml(job.device.code)}"><span class="device-code-value">${escapeHtml(job.device.code)}</span><span class="device-code-feedback" data-copy-label aria-live="polite">Clique para copiar</span></button><p class="hint">Aguardando a conclusão. O código será removido ao terminar.</p></div>`,
   );
 }
@@ -1251,7 +1255,9 @@ const actionIcons = {
   configure: "settings",
 };
 function sessionActionButton(action, id) {
-  return `<button class="${action === "remove" ? "danger" : ""}" data-action="${action}" data-id="${escapeHtml(id)}">${icon(actionIcons[action])}${actions[action]}</button>`;
+  const session = overview.sessions.find(candidate => candidate.id === id);
+  const unavailable = action === "reconnect" && !session?.tunnel_id;
+  return `<button class="${action === "remove" ? "danger" : ""}" data-action="${action}" data-id="${escapeHtml(id)}"${unavailable ? ' disabled title="Conecte este túnel primeiro para habilitar a reconexão."' : ""}>${icon(actionIcons[action])}${actions[action]}</button>`;
 }
 function detailActions(id) {
   if (me.role === "viewer") return "";

@@ -11,6 +11,7 @@ export { DEFAULT_PROXY_PORT as PUBLISHED_PROXY_PORT } from "./model.js";
 export class MappedTunnelHost extends TunnelRelayTunnelHost {
   private disposed?: Promise<void>;
   private readonly mappings: ReadonlyMap<number, number>;
+  get relayHostId(): string { return this.connectionId; }
   constructor(
     management: TunnelManagementClient,
     readonly listenerPort: number,

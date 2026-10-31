@@ -2,6 +2,8 @@ import { TunnelManagementHttpClient, ManagementApiVersions } from '@microsoft/de
 import type { Tunnel } from '@microsoft/dev-tunnels-contracts';
 import { MappedTunnelHost } from './mapped-host.js';
 import { SocksProxy } from './socks.js';
+import { SshDisconnectReason } from '@microsoft/dev-tunnels-ssh';
+import {verifyHostedProxy} from './relay-health.js';
 
 // Credentials travel only over Node's private IPC channel, never argv or logs.
 let host: MappedTunnelHost | undefined;
@@ -10,12 +12,12 @@ let starting = false;
 let stopping = false;
 let sequence = 0;
 const requests = new Map<number, { resolve: (t: Tunnel) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
-function credentials(): Promise<Tunnel> {
+function credentials(scope: 'host' | 'connect' = 'host'): Promise<Tunnel> {
   const id = ++sequence;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { requests.delete(id); reject(new Error('CREDENTIAL_TIMEOUT')); }, 150000);
     requests.set(id, { resolve, reject, timer });
-    process.send?.({ type: 'credentials', id });
+    process.send?.({ type: 'credentials', id, scope });
   });
 }
 async function stop(code: number): Promise<void> {
@@ -33,10 +35,17 @@ process.on('disconnect', () => void stop(0));
 process.on('uncaughtException', () => void stop(1));
 process.on('unhandledRejection', () => void stop(1));
 process.on('message', async (message: any) => {
+  if (message.type === 'health') {
+    process.send?.({type:'health', id:message.id, status:host?.connectionStatus ?? 'disconnected'});
+    return;
+  }
   if (message.type === 'credentials') {
     const entry = requests.get(message.id); if (!entry) return;
     requests.delete(message.id); clearTimeout(entry.timer);
-    if (message.error) { entry.reject(new Error('CREDENTIAL_FAILED')); await stop(['AUTH_REQUIRED','LOGIN_TOKEN_EXPIRED'].includes(message.error) ? 75 : 1); }
+    if (message.error) {
+      entry.reject(new Error('CREDENTIAL_FAILED'));
+      if (['AUTH_REQUIRED','LOGIN_TOKEN_EXPIRED'].includes(message.error)) await stop(75);
+    }
     else entry.resolve(message.tunnel);
     return;
   }
@@ -53,14 +62,31 @@ process.on('message', async (message: any) => {
     host = new MappedTunnelHost(management, message.listener, message.proxyPort, message.socks);
     host.refreshingTunnelAccessToken(e => { e.tunnelAccessToken = credentials().then(t => t.accessTokens!.host); });
     host.refreshingTunnel(e => { e.tunnelPromise = credentials(); });
-    host.connectionStatusChanged(e => process.send?.({ type: 'status', status: e.status }));
-    await host.connect(await credentials());
+    host.connectionStatusChanged(e => {
+      process.send?.({ type: 'status', status: e.status });
+      if (e.status === 'disconnected' && !stopping) void stop(host?.disconnectReason === SshDisconnectReason.tooManyConnections ? 78 : 1);
+    });
+    const tunnel = await credentials();
+    process.send?.({type:'relay_connecting'});
+    await host.connect(tunnel);
+    if (message.verifyDataPath) {
+      try {
+        await verifyHostedProxy(management, await credentials('connect'), host.relayHostId,
+          [{port: message.proxyPort, socks:false}, ...(message.socks ? [{port:message.socks.proxyPort, socks:true}] : [])]);
+      } catch {
+        process.send?.({type:'failure', code:'RECONNECT_DATA_PATH_FAILED'});
+        await stop(1); return;
+      }
+    }
     process.send?.({ type: 'ready' });
     let refreshing = false;
     setInterval(() => {
       if (refreshing || stopping) { return; }
       refreshing = true;
-      host!.refreshPorts().catch(() => stop(1)).finally(() => { refreshing = false; });
+      host!.refreshPorts().catch(() => {
+        if (host?.isDisposed) void stop(1); // A confirmed port-policy change fails closed.
+        else process.send?.({ type: 'maintenance', code: 'METADATA_REFRESH_FAILED' });
+      }).finally(() => { refreshing = false; });
     }, message.maintenanceSeconds * 1000);
   } catch { await stop(1); }
 });

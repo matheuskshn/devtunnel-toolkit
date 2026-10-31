@@ -45,6 +45,7 @@ export interface Persistence {
   restore(id: string, home: string): Promise<void>;
   beginAuth(id: string): Promise<void>;
   checkpoint(id: string, home: string): Promise<void>;
+  replaceCredentials?(id: string, home: string): Promise<void>;
 }
 
 function validateSessionName(session: Session): void {
@@ -121,6 +122,7 @@ function normalizeSession(session: Session, config: Config): void {
   session.auth_warning_hours ??= config.authWarningHours;
 }
 function validateSession(session: Session, config: Config): void {
+  check(session.credential_generation === undefined || /^[a-f0-9]{32}$/.test(session.credential_generation), "INVALID_CREDENTIAL_GENERATION");
   check(
     validId(session.id) && ["microsoft", "github"].includes(session.provider),
     "INVALID_STATE",

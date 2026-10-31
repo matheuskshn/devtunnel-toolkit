@@ -64,8 +64,14 @@ hub session remove user-a
 
 O ID local é opcional em `hub session add`; quando omitido, o Hub gera um ID
 opaco. `connect` valida ou solicita o login e inicia o túnel em uma única ação.
-`reconnect` para o relay, limpa o login armazenado, exige nova autenticação da
-mesma identidade e inicia o túnel novamente. As ações individuais `login` e
+`reconnect` autentica a mesma identidade em um diretório de credenciais separado,
+valida o recurso remoto existente e tenta conectar um relay novo. A sessão atual
+permanece disponível durante a autenticação e a validação. O processo anterior e
+suas credenciais locais só são retirados após a confirmação da nova conexão e a
+gravação do estado. Uma falha anterior à troca preserva a sessão atual; uma falha
+durante a troca tenta restaurar o relay com as credenciais anteriores. O serviço
+permite um host por túnel, portanto a troca pode interromper streams existentes e
+não garante continuidade sem pausas. As ações individuais `login` e
 `start` continuam disponíveis para diagnóstico e automação avançada.
 `configure` altera a janela deslizante de inatividade do recurso e as estimativas
 de validade/aviso do login. O serviço continua sendo a fonte da expiração real.
@@ -85,6 +91,24 @@ de validade/aviso do login. O serviço continua sendo a fonte da expiração rea
 - `remove` logs out and tombstones the session. It does **not** delete a remote
   tunnel or erase storage/backups. Names, IDs and listener allocations are never
   recycled. Remote deletion is a separate, explicit administrator operation.
+
+Reconnect never logs out the active CLI cache or changes the remote tunnel's ports
+or ACLs. A missing or incompatible remote resource fails preflight. PostgreSQL
+keeps candidate credentials out of the active row until atomic promotion; filesystem
+storage records a private credential-generation directory only after connection.
+Back up the private state before upgrading: older versions do not understand the
+new credential-home reference, so downgrade needs the matching pre-upgrade backup.
+Relay disconnection is recorded and a permanently disconnected worker exits instead
+of remaining falsely active. Transient metadata refresh failure preserves the relay;
+authorization and validated policy failures still stop it.
+
+Before promoting a replacement, its worker also connects a temporary client to that
+specific host ID through the relay and checks HTTP OPTIONS and the SOCKS5 greeting
+for the published proxy ports. It binds no local client sockets, sends no credentials
+to a destination and follows no application URLs. The probe has a 15-second deadline;
+the candidate relay has a 90-second readiness deadline. A response such as HTTP 403
+proves proxy transport, not destination access. Failed promotion preserves an old
+worker that still confirms connected; otherwise rollback attempts to restore it.
 
 Session IDs must be lowercase letters/digits/hyphens, 3-32 characters; names must
 be 3-49 characters. A name collision fails, without inventing a random suffix or

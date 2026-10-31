@@ -32,7 +32,7 @@ test("release publication waits for checks and all builds, reuses candidates, an
   assert.equal(w.concurrency["cancel-in-progress"], false);
   assert.deepEqual(w.jobs.build.needs, ["prepare", "checks"]);
   assert.deepEqual(w.jobs.record.needs, ["prepare", "checks", "build"]);
-  assert.deepEqual(w.jobs.finalize.needs, ["prepare", "checks", "record"]);
+  assert.deepEqual(w.jobs.finalize.needs, ["prepare", "checks", "record", "desktop"]);
   assert.equal(w.jobs.checks.with.container, true);
   assert.equal(w.jobs.build.uses, "./.github/workflows/native-image.yml");
   assert.equal(w.jobs.build.with.mode, "release");
