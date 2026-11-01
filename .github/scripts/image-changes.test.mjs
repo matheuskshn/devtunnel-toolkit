@@ -96,6 +96,22 @@ test("multiple image changes produce only the affected matrix entries", () => {
   assert.equal(result.hub, true);
 });
 
+test("desktop-only changes never select container rebuilds", () => {
+  const result = selectImages([
+    "apps/desktop/src/DevTunnelToolkit.Agent/Program.cs",
+    "apps/desktop/src/DevTunnelToolkit.App/MainWindow.cs",
+    "apps/desktop/src/DevTunnelToolkit.DevTunnels/packages.lock.json",
+    "apps/desktop/Directory.Build.props",
+    ".github/workflows/desktop.yml",
+    ".github/scripts/desktop-release.mjs",
+  ]);
+  assert.deepEqual(result, {
+    matrix: { include: [] },
+    legacy: false,
+    hub: false,
+  });
+});
+
 function repository(t) {
   const cwd = mkdtempSync(path.join(os.tmpdir(), "image-changes-"));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));

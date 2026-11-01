@@ -1,5 +1,17 @@
 version: 2
 updates:
+  - package-ecosystem: "nuget"
+    directories:
+      - "/apps/desktop/src/*"
+      - "/apps/desktop/tests/*"
+    schedule:
+      interval: "weekly"
+    groups:
+      desktop-compatible:
+        update-types: ["minor", "patch"]
+    labels:
+      - "dependencies"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

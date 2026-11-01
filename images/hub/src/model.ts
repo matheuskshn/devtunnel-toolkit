@@ -8,6 +8,7 @@ export interface Identity { provider: Provider; user_id: string; user_login: str
 export interface Session {
   id: string; provider: Provider; tunnel_name?: string; tunnel_id?: string;
   tunnel_name_template?: string;
+  credential_generation?: string;
   tunnel_expiration_hours?: number;
   auth_expected_hours?: number; auth_warning_hours?: number;
   authenticated_at?: string; auth_last_verified_at?: string;

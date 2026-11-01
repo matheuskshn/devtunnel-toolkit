@@ -8,6 +8,15 @@ COPY tsconfig.json ./
 COPY src/ ./src/
 RUN npm run build && npm prune --omit=dev --ignore-scripts
 
+# Unchanged vendor application, hosted by a separately pinned, patched .NET runtime.
+FROM node:24-trixie-slim@sha256:6950b66b4c0cb0151ce89fa75074673850763d096b044f422c6729b588dd4956 AS cli
+ARG TARGETARCH
+ARG DEVTUNNEL_VERSION=1.0.2115
+ARG DEVTUNNEL_SHA256
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libicu76
+COPY bin/managed-cli.mjs bin/install-managed-cli.mjs bin/devtunnel-runtime.json /build-tools/
+RUN node /build-tools/install-managed-cli.mjs "$TARGETARCH" "$DEVTUNNEL_VERSION" "$DEVTUNNEL_SHA256"
+
 # Same Ubuntu ABI as the runtime. Sources are checksum-pinned, compiled, tested
 # and packaged with ownership/provenance; never overlay untracked shared objects.
 FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d AS native
@@ -33,13 +42,10 @@ COPY bin/package-native-libraries.mjs bin/native-metadata.mjs /build-tools/
 RUN sh /build-tools/build-native-libraries package
 
 FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d
-ARG TARGETARCH
-ARG DEVTUNNEL_VERSION=1.0.2094
-ARG DEVTUNNEL_SHA256
 # Keep private session buses and keyrings, without a systemd/PAM login stack.
 # ICU is supplied by this distribution, not copied from the Debian build stage.
 RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
-    ca-certificates curl dbus-x11 gnome-keyring libicu78 libsecret-1-0 libsecret-tools \
+    ca-certificates dbus-x11 gnome-keyring libicu78 libssl3t64 libsecret-1-0 libsecret-tools \
     libstdc++6 squid systemd-standalone-sysusers tini util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && test "$(id -u ubuntu)" = 1000 && test "$(id -g ubuntu)" = 1000 \
@@ -50,22 +56,8 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
        --home-dir /run/hub/home --shell /usr/sbin/nologin hub-restricted \
     && mkdir -p /data /config /run/hub /opt/hub \
     && chown hub:hub /data /run/hub
-RUN case "${TARGETARCH}" in \
-      amd64) hub_arch=x64; hub_checksum=2aa6c41aaf7840427e84b7e1e99be5b826a9966fc027ddf61dc0f69b68db060b ;; \
-      arm64) hub_arch=arm64; hub_checksum=efac378f9ffb40914935fbd2361543088b50cd62248372df06c243e6f7c49cc8 ;; \
-      *) exit 1 ;; esac \
-    && curl --silent --show-error --fail --location \
-       --retry 3 --connect-timeout 15 --max-time 180 --proto '=https' --tlsv1.2 \
-       "https://tunnelsassetsprod.blob.core.windows.net/cli/linux-${hub_arch}-devtunnel" -o /usr/local/bin/devtunnel \
-    && echo "${DEVTUNNEL_SHA256:-$hub_checksum}  /usr/local/bin/devtunnel" | sha256sum -c - \
-    && chmod 755 /usr/local/bin/devtunnel \
-    && DOTNET_BUNDLE_EXTRACT_BASE_DIR=/tmp/devtunnel-check /usr/local/bin/devtunnel --version \
-       | grep -F "${DEVTUNNEL_VERSION}" \
-    && mkdir -p /usr/local/share/devtunnel \
-    && find /tmp/devtunnel-check -name devtunnel.deps.json \
-       -exec cp '{}' /usr/local/share/devtunnel/devtunnel.deps.json \; \
-    && rm -rf /tmp/devtunnel-check \
-    && apt-get purge -y --auto-remove curl
+COPY --from=cli /out/ /opt/devtunnel/
+COPY --chmod=755 bin/devtunnel-cli /usr/local/bin/devtunnel
 # The base includes an unpackaged Pebble supervisor. Hub uses tini and its own
 # manager; do not retain a second, unused supervisor and its embedded runtime.
 RUN test -f /usr/bin/pebble && test ! -L /usr/bin/pebble \

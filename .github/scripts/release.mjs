@@ -21,6 +21,7 @@ import {
   versionInfo,
 } from "./release-policy.mjs";
 import { trustedExecutable } from "./trusted-executable.mjs";
+import { validateDesktopArtifacts } from "./desktop-release.mjs";
 
 const run = (file, args) =>
   execFileSync(trustedExecutable(file), args, {
@@ -333,6 +334,12 @@ function recordCandidate(mode, info, sha) {
   output("ref", `${built.repository}@${built.digest}`);
 }
 async function finalizeRelease(info, sha) {
+  // Validate desktop artifacts before changing registry aliases or publishing.
+  const desktop = validateDesktopArtifacts(
+    "desktop-release-assets",
+    info.version,
+    sha,
+  );
   const release = await prepareRelease({
     version: info.version,
     sha,
@@ -361,6 +368,7 @@ async function finalizeRelease(info, sha) {
           ...r,
           repositories: repositories(r.image),
         })),
+        desktop: desktop.records,
       },
       null,
       2,
@@ -370,6 +378,7 @@ async function finalizeRelease(info, sha) {
     .filter((f) => f.endsWith(".json"))
     .sort()
     .map((f) => `release-assets/${f}`);
+  files.push(...desktop.files);
   writeFileSync(
     "release-assets/SHA256SUMS",
     files
@@ -413,7 +422,7 @@ async function finalizeRelease(info, sha) {
           draft: false,
           prerelease: info.prerelease,
           make_latest: info.prerelease ? "false" : "true",
-          body: `${release.body ?? ""}\n\n## Container images\n\n${imageNotes}\n\nUse image digests to pin deployments. See release-manifest.json, SBOMs, provenance and SHA256SUMS below.`,
+          body: `${release.body ?? ""}\n\n## Container images\n\n${imageNotes}\n\nUse image digests to pin deployments. See release-manifest.json, image provenance, SBOMs and SHA256SUMS below.\n\n## Desktop application\n\nWindows and Linux archives for x64 and ARM64 are attached with build metadata and SPDX SBOMs. Native CLI/agent smoke checks run on x64; ARM64 artifacts are cross-built. Archives are not code-signed.`,
         },
       }),
   });

@@ -4,12 +4,35 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import os from "node:os";
+import path from "node:path";
 
 const run = (file, args) =>
   execFileSync(file, args, { encoding: "utf8" }).trim();
 const root = "/usr/local/share/devtunnel/native/evidence";
 const expectedUid = Number(process.env.HUB_TEST_EXPECTED_UID ?? 1000);
 assert.ok([1000, 10001].includes(expectedUid));
+const cliEvidence = JSON.parse(fs.readFileSync("/opt/devtunnel/evidence/packaging.json"));
+assert.equal(cliEvidence.deployment, "framework-dependent");
+assert.equal(cliEvidence.installedRuntime, "10.0.14");
+for (const file of cliEvidence.applicationFiles) {
+  assert.equal(createHash("sha256").update(fs.readFileSync(`/opt/devtunnel/cli/${file.name}`)).digest("hex"), file.sha256);
+}
+for (const file of cliEvidence.excludedRuntimeFiles) {
+  assert.equal(fs.existsSync(`/opt/devtunnel/cli/${file.name}`), false);
+}
+const cliHome = fs.mkdtempSync(path.join(os.tmpdir(), "cli-runtime-proof-"));
+try {
+  for (const directory of [".config", ".local/share", ".cache"]) fs.mkdirSync(path.join(cliHome, directory), { recursive: true });
+  const traceFile = path.join(cliHome, "host-trace.txt");
+  const help = execFileSync("devtunnel", ["--help"], { encoding: "utf8", timeout: 15000, cwd: cliHome,
+    env: { ...process.env, HOME: cliHome, XDG_CONFIG_HOME: path.join(cliHome, ".config"),
+      XDG_DATA_HOME: path.join(cliHome, ".local/share"), XDG_CACHE_HOME: path.join(cliHome, ".cache"),
+      DOTNET_HOST_TRACE: "1", DOTNET_HOST_TRACEFILE: traceFile } });
+  assert.match(help, /Dev Tunnels CLI/);
+  const trace = fs.readFileSync(traceFile, "utf8");
+  assert.ok(trace.includes("CoreCLR path = '/opt/devtunnel/dotnet/shared/Microsoft.NETCore.App/10.0.14/libcoreclr.so'"));
+} finally { fs.rmSync(cliHome, { recursive: true, force: true }); }
 const packages = JSON.parse(fs.readFileSync(`${root}/packages.json`));
 assert.equal(packages.length, 5);
 for (const p of packages) {
@@ -89,6 +112,7 @@ assert.ok(
 console.log(
   JSON.stringify({
     nativePackages: packages.length,
+    cliRuntime: cliEvidence.installedRuntime,
     hashes: packages.reduce((n, p) => n + p.replaced.length, 0),
     absentComponents: absent,
     libdwAbsent: true,

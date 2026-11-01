@@ -136,6 +136,15 @@ test("HTML helpers escape content and attribute boundaries without using depreca
   );
 });
 
+test("reconnect dialog explains staged authentication and rollback without logging out the active session",async()=>{
+  const f=fixture();
+  f.run("api = async () => ({job:{id:'candidate-job'}}); refresh = async () => {}; ");
+  await f.run("submitAction('reconnect','session-one')");
+  assert.match(f.element('#dialog').innerHTML,/sessão atual permanece ativa/);
+  assert.match(f.element('#dialog').innerHTML,/restaurar a anterior/);
+  assert.doesNotMatch(f.element('#dialog').innerHTML,/limpa o login|credenciais.*desconectadas/);
+});
+
 test("session renderers preserve state labels, filters, mapping and role-specific actions", () => {
   const f = fixture();
   f.run('view="sessions";renderView();');

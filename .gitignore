@@ -15,3 +15,13 @@ dist/
 build/
 coverage/
 /release-assets/
+/desktop-release-assets/
+.local/
+apps/desktop/**/bin/
+apps/desktop/**/obj/
+apps/desktop/**/TestResults/
+apps/desktop/artifacts/
+apps/desktop/.vs/
+apps/desktop/**/*.user
+apps/desktop/**/__pycache__/
+apps/desktop/**/*.pyc

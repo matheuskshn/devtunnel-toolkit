@@ -486,6 +486,30 @@ export class PostgresPersistence implements Persistence {
       );
     });
   }
+  async replaceCredentials(id: string, home: string): Promise<void> {
+    const packed = await packHome(home);
+    return this.serial(async () => {
+      await this.sql("BEGIN");
+      try {
+        const row = (await this.sql(
+          "SELECT generation,dirty FROM devtunnel_hub.credentials WHERE hub_id=$1 AND session_id=$2 FOR UPDATE",
+          [this.hubId, id],
+        )).rows[0];
+        check(!row?.dirty, "CREDENTIAL_CHECKPOINT_IN_PROGRESS");
+        const generation = (BigInt(row?.generation ?? 0) + 1n).toString();
+        await this.sql(
+          `INSERT INTO devtunnel_hub.credentials(hub_id,session_id,generation,package,dirty)
+           VALUES($1,$2,$3,$4,false) ON CONFLICT(hub_id,session_id) DO UPDATE
+           SET generation=EXCLUDED.generation,package=EXCLUDED.package,dirty=false`,
+          [this.hubId, id, generation, seal(packed, `${this.hubId}:${id}:${generation}`, this.keys)],
+        );
+        await this.sql("COMMIT");
+      } catch (error) {
+        await this.client.query("ROLLBACK").catch(() => {});
+        throw error;
+      }
+    });
+  }
   async markFailed(): Promise<void> {
     if (
       !this.coordinated ||

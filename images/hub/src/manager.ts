@@ -49,6 +49,8 @@ import { ControlStore } from "./web/control.js";
 import { validateWebPort, webOptions } from "./web/security.js";
 import { WebConsole } from "./web/server.js";
 import { infrastructureFields } from "./environment.js";
+import { randomUUID } from "node:crypto";
+import { StagedCredentials } from "./staged-credentials.js";
 
 export class Manager {
   readonly store: StateStore;
@@ -59,6 +61,10 @@ export class Manager {
   private healthy = false;
   private readonly runtimes = new Map<string, SessionRuntime>();
   private readonly workers = new Map<string, ChildProcess>();
+  private readonly allWorkers = new Set<ChildProcess>();
+  private readonly replacements = new Set<string>();
+  private readonly replacementRuntimes = new Set<SessionRuntime>();
+  private readonly replacementListeners = new Set<number>();
   private readonly busy = new Set<string>();
   private readonly retries = new Map<string, NodeJS.Timeout>();
   private readonly failures = new Map<string, number>();
@@ -337,15 +343,7 @@ export class Manager {
         s,
         this.dataDir,
         directory,
-        () => {
-          if (!this.stopping) {
-            s.status = "error";
-            s.error = "SESSION_SERVICE_FAILED";
-            void this.stopWorker(s)
-              .then(() => this.store.save())
-              .catch(() => {});
-          }
-        },
+        () => this.runtimeFailed(s.id, runtime!),
         this.config.allowedMicrosoftTenants,
         this.persistence,
       );
@@ -487,17 +485,16 @@ export class Manager {
     s.status = "starting";
     delete s.error;
     await this.store.save();
-    const worker = fork(new URL("./worker.js", import.meta.url), [], {
-      env: runtime.env,
-      stdio: ["ignore", "ignore", "ignore", "ipc"],
-    });
+    const worker = this.createWorker(runtime);
     this.workers.set(s.id, worker);
     worker.once("error", () => {
-      void this.fail(s, new HubError("WORKER_FAILED"));
+      if (this.workers.get(s.id) === worker && !this.replacements.has(s.id) && !this.stopping)
+        void this.fail(s, new HubError("WORKER_FAILED"));
     });
     worker.on("message", (message: any) => {
+      if (message.type === "maintenance") this.log("session_metadata_stale", s, "METADATA_REFRESH_FAILED");
       if (message.type === "credentials") {
-        this.track(this.credentialsForWorker(s, runtime, worker, message.id));
+        this.track(this.credentialsForWorker(s, runtime, worker, message.id, message.scope));
       } else if (message.type === "ready" || message.type === "status") {
         if (this.workers.get(s.id) !== worker) return;
         s.status =
@@ -505,6 +502,7 @@ export class Manager {
             ? "running"
             : "starting";
         if (s.status === "running") this.failures.delete(s.id);
+        if (message.type === "status") this.log("session_relay_status", s, message.status);
         void this.store.save().catch(() => {
           void this.close();
         });
@@ -513,10 +511,10 @@ export class Manager {
     worker.once("exit", (code) => {
       if (this.workers.get(s.id) !== worker) return;
       this.workers.delete(s.id);
-      if (this.stopping || !s.desired) return;
+      if (this.stopping || !s.desired || this.replacements.has(s.id)) return;
       void this.fail(
         s,
-        new HubError(code === 75 ? "AUTH_REQUIRED" : "WORKER_FAILED"),
+        new HubError(code === 75 ? "AUTH_REQUIRED" : code === 78 ? "HOST_REPLACED" : "WORKER_FAILED"),
       );
     });
     worker.send({
@@ -535,11 +533,13 @@ export class Manager {
     runtime: SessionRuntime,
     worker: ChildProcess,
     id: number,
+    scope: "host" | "connect" = "host",
   ): Promise<void> {
     if (this.workers.get(s.id) !== worker) return;
     try {
       const previousHostExpiration = s.host_token_expires_at;
-      const tunnel = await runtime.credentials();
+      check(scope === "host" || scope === "connect", "INVALID_CREDENTIAL_SCOPE");
+      const tunnel = scope === "connect" ? await runtime.clientCredentials() : await runtime.credentials();
       if (s.host_token_expires_at !== previousHostExpiration)
         this.log("session_host_token_refreshed", s);
       if (this.workers.get(s.id) !== worker) return;
@@ -569,7 +569,7 @@ export class Manager {
       if (this.workers.get(s.id) !== worker) return;
       if (worker.connected)
         worker.send({ type: "credentials", id, error: errorCode(e) }, () => {});
-      await this.fail(s, e);
+      if (!["COMMAND_FAILED", "COMMAND_CANCELLED_OR_TIMEOUT"].includes(errorCode(e))) await this.fail(s, e);
     }
   }
   private async fail(s: Session, e: unknown): Promise<void> {
@@ -618,32 +618,203 @@ export class Manager {
     this.workers.delete(s.id);
     await terminate(worker);
   }
+  private createWorker(runtime: SessionRuntime): ChildProcess {
+    const worker = fork(new URL("./worker.js", import.meta.url), [], {
+      env: runtime.env, stdio: ["ignore", "ignore", "ignore", "ipc"],
+    });
+    this.allWorkers.add(worker);
+    worker.once("exit", () => this.allWorkers.delete(worker));
+    return worker;
+  }
+
+  private reserveReplacementListener(): number {
+    const occupied = new Set(this.store.state.sessions.flatMap(s => [s.listener, s.socks_listener]));
+    for (let port = this.config.listenerStart; port <= this.config.listenerEnd; port++) {
+      if (!occupied.has(port) && !this.replacementListeners.has(port)) {
+        this.replacementListeners.add(port);
+        return port;
+      }
+    }
+    throw new HubError("LISTENER_POOL_EXHAUSTED");
+  }
+
+  private runtimeFailed(id: string, runtime: SessionRuntime): void {
+    if (this.stopping || this.runtimes.get(id) !== runtime) return;
+    const session = this.store.get(id);
+    session.status = "error";
+    session.error = "SESSION_SERVICE_FAILED";
+    void this.stopWorker(session).then(() => this.store.save()).catch(() => {});
+  }
+
+  private replacementRuntime(s: Session, persistence?: Persistence): SessionRuntime {
+    const runtime = new SessionRuntime(s, this.dataDir, path.join(this.runDir, `candidate-${s.credential_generation}`),
+      () => this.runtimeFailed(s.id, runtime), this.config.allowedMicrosoftTenants, persistence);
+    return runtime;
+  }
+
+  private workerConnected(worker?: ChildProcess): Promise<boolean> {
+    if (!worker?.connected || worker.exitCode !== null || worker.signalCode !== null) return Promise.resolve(false);
+    return new Promise(resolve => {
+      const id = randomUUID();
+      let finished = false;
+      const finish = (connected: boolean) => {
+        if (finished) return;
+        finished = true; clearTimeout(timeout);
+        worker.off("message", receive); worker.off("exit", lost); worker.off("error", lost);
+        resolve(connected);
+      };
+      const receive = (message: any) => { if (message.type === "health" && message.id === id) finish(message.status === "connected"); };
+      const lost = () => finish(false);
+      const timeout = setTimeout(lost, 1500);
+      worker.on("message", receive); worker.once("exit", lost); worker.once("error", lost);
+      try { worker.send({ type: "health", id }, error => { if (error) lost(); }); }
+      catch { lost(); }
+    });
+  }
+
+  private async reconnectSession(s: Session, output: (chunk: string) => void): Promise<Session> {
+    const original = structuredClone(s);
+    const previous = await this.runtime(s);
+    const previousWorker = this.workers.get(s.id);
+    const candidate = { ...structuredClone(s), credential_generation: randomUUID().replaceAll("-", "") };
+    const persistence = this.persistence ? new StagedCredentials(this.persistence) : undefined;
+    const runtime = this.replacementRuntime(candidate, persistence);
+    let worker: ChildProcess | undefined;
+    let handoff = false;
+    let promoted = false;
+    let previousClosed = false;
+    let reserved: number | undefined;
+    let readinessDeadline: NodeJS.Timeout | undefined;
+    this.replacements.add(s.id);
+    this.replacementRuntimes.add(runtime);
+    clearTimeout(this.retries.get(s.id));
+    this.retries.delete(s.id);
+    this.log("session_reconnect_preparing", s);
+    try {
+      await runtime.open();
+      // A fresh, isolated home authenticates the same immutable identity. The old
+      // account's cache, token and relay remain available during user interaction.
+      await runtime.login(output);
+      check(candidate.identity?.user_id === original.identity?.user_id || !original.identity, "IDENTITY_CHANGED");
+      await runtime.credentials(); // Read-only preflight: no remote provisioning or logout.
+      this.log("session_reconnect_validated", s);
+      check(!this.stopping, "MANAGER_STOPPING");
+      if (this.config.socksEnabled) candidate.socks_listener = reserved = this.reserveReplacementListener();
+      worker = this.createWorker(runtime);
+      const activeWorker = worker;
+      let rejectReady!: (error: Error) => void;
+      let resolveReady!: () => void;
+      const ready = new Promise<void>((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+      void ready.catch(() => {}); // Observe early IPC/spawn failure before send() returns.
+      readinessDeadline = setTimeout(() => rejectReady(new HubError("RECONNECT_TIMEOUT")), 90000);
+      let relayStatus = "connecting";
+      // Handlers stay attached after promotion, but never dispatch candidate
+      // failures into fail(s) while the old session is still active.
+      activeWorker.on("message", (message: any) => {
+        if (message.type === "status") relayStatus = message.status;
+        if (message.type === "relay_connecting") handoff = true;
+        if (message.type === "failure" && message.code === "RECONNECT_DATA_PATH_FAILED") rejectReady(new HubError("RECONNECT_DATA_PATH_FAILED"));
+        if (message.type === "maintenance" && promoted) this.log("session_metadata_stale", s, "METADATA_REFRESH_FAILED");
+        if (message.type === "credentials") {
+          if (promoted) this.track(this.credentialsForWorker(s, runtime, activeWorker, message.id, message.scope));
+          else this.track((async () => {
+            try {
+              check(message.scope === undefined || message.scope === "host" || message.scope === "connect", "INVALID_CREDENTIAL_SCOPE");
+              const tunnel = message.scope === "connect" ? await runtime.clientCredentials() : await runtime.credentials();
+              if (activeWorker.connected) activeWorker.send({ type: "credentials", id: message.id, tunnel }, () => {});
+            } catch (error) {
+              if (activeWorker.connected) activeWorker.send({ type: "credentials", id: message.id, error: errorCode(error) }, () => {});
+              rejectReady(new HubError(errorCode(error)));
+            }
+          })());
+        } else if (message.type === "ready") { relayStatus = "connected"; resolveReady(); }
+        else if (message.type === "status" && promoted && this.workers.get(s.id) === activeWorker) {
+          s.status = message.status === "connected" ? "running" : "starting";
+          this.log("session_relay_status", s, message.status);
+          void this.store.save().catch(() => this.fence());
+        }
+      });
+      activeWorker.once("error", () => {
+        rejectReady(new HubError("WORKER_FAILED"));
+        if (promoted && this.workers.get(s.id) === activeWorker && !this.stopping) void this.fail(s, new HubError("WORKER_FAILED"));
+      });
+      activeWorker.once("exit", code => {
+        rejectReady(new HubError("WORKER_FAILED"));
+        if (promoted && this.workers.get(s.id) === activeWorker) {
+          this.workers.delete(s.id);
+          if (!this.stopping && s.desired) void this.fail(s, new HubError(code === 75 ? "AUTH_REQUIRED" : code === 78 ? "HOST_REPLACED" : "WORKER_FAILED"));
+        }
+      });
+      this.log("session_reconnect_connecting", s);
+      activeWorker.send({ type: "start", listener: s.listener, proxyPort: this.config.proxyPort,
+        socks: this.config.socksEnabled ? { proxyPort: this.config.socksPort, listenerPort: candidate.socks_listener } : undefined,
+        maintenanceSeconds: this.config.maintenanceSeconds, verifyDataPath: true });
+      await ready;
+      clearTimeout(readinessDeadline);
+      check(!this.stopping && relayStatus === "connected" && activeWorker.exitCode === null && activeWorker.signalCode === null, "WORKER_FAILED");
+      await runtime.quiescent(async () => {
+        // Ignore old-worker callbacks before quiescing its credential queue so
+        // no late checkpoint can overwrite the successfully authenticated cache.
+        this.workers.set(s.id, activeWorker);
+        this.runtimes.set(s.id, runtime);
+        previousClosed = true;
+        await previous.close();
+        check(!this.stopping && relayStatus === "connected" && activeWorker.exitCode === null && activeWorker.signalCode === null, "WORKER_FAILED");
+        await persistence?.promote(s.id, runtime.env.HOME!);
+        Object.assign(s, candidate, { status: "running", desired: true });
+        delete s.error;
+        if (reserved !== undefined) this.store.state.next_listener = Math.max(this.store.state.next_listener, reserved + 1);
+        runtime.session = s;
+        this.runtimes.set(s.id, runtime);
+        await this.store.save();
+        promoted = true;
+      });
+      // Only a confirmed new relay and saved credentials permit retirement.
+      await terminate(previousWorker);
+      if (!this.persistence && previous.env.HOME !== runtime.env.HOME)
+        await rm(previous.env.HOME!, { recursive: true, force: true }).catch(() => this.log("session_previous_credentials_cleanup_failed", s, "CREDENTIAL_CLEANUP_FAILED"));
+      this.failures.delete(s.id);
+      this.log("session_reconnect", s);
+      return s;
+    } catch (error) {
+      this.log("session_reconnect_failed", s, errorCode(error));
+      if (promoted) throw error;
+      await terminate(worker);
+      await runtime.close();
+      await rm(runtime.env.HOME!, { recursive: true, force: true });
+      if (this.stopping) throw error;
+      if (!previousClosed && await this.workerConnected(previousWorker)) {
+        this.workers.set(s.id, previousWorker!);
+        s.status = "running";
+        this.log("session_reconnect_previous_preserved", s);
+        throw error;
+      }
+      Object.assign(s, original);
+      // The relay service allows one host. Once a candidate attempts connection,
+      // an unsuccessful handoff may require reconnecting the preserved credentials.
+      if (handoff || previousClosed || previousWorker?.exitCode !== null || previousWorker?.signalCode !== null) {
+        this.workers.delete(s.id);
+        await terminate(previousWorker);
+        this.runtimes.delete(s.id);
+        await previous.close();
+        if (s.desired) await this.start(s).catch(failure => this.fail(s, failure));
+        else await this.store.save();
+      }
+      throw error;
+    } finally {
+      clearTimeout(readinessDeadline);
+      this.replacements.delete(s.id);
+      this.replacementRuntimes.delete(runtime);
+      if (reserved !== undefined) this.replacementListeners.delete(reserved);
+    }
+  }
+
   private async authenticateSession(
     s: Session,
     output: (chunk: string) => void,
-    force: boolean,
   ): Promise<void> {
     s.desired = false;
     await this.stopWorker(s);
-    if (force) {
-      const previous = await this.runtime(s);
-      try {
-        await previous.cli(["user", "logout"]);
-      } catch (e) {
-        // Reauthentication must also recover a cache whose login already expired.
-        if (
-          !(e instanceof HubError) ||
-          !["AUTH_REQUIRED", "LOGIN_TOKEN_EXPIRED"].includes(e.code)
-        )
-          throw e;
-      }
-      await previous.close();
-      this.runtimes.delete(s.id);
-      s.status = "reauth_required";
-      delete s.error;
-      this.clearCredentialValidity(s);
-      await this.store.save();
-    }
     const runtime = await this.runtime(s);
     await runtime.login(output);
     this.store.resolveName(s);
@@ -892,9 +1063,10 @@ export class Manager {
         "USAGE",
       );
       const s = this.store.get(id);
+      if (operation === "reconnect") return this.reconnectSession(s, output);
       try {
-        if (operation === "connect" || operation === "reconnect") {
-          await this.authenticateSession(s, output, operation === "reconnect");
+        if (operation === "connect") {
+          await this.authenticateSession(s, output);
           await this.start(s);
           this.log(`session_${operation}`, s);
           return s;
@@ -908,7 +1080,7 @@ export class Manager {
           await this.stopWorker(s);
           s.status = s.identity ? "stopped" : "login_required";
         } else if (operation === "login") {
-          await this.authenticateSession(s, output, false);
+          await this.authenticateSession(s, output);
         } else if (operation === "logout" || operation === "remove") {
           s.desired = false;
           await this.stopWorker(s);
@@ -991,7 +1163,8 @@ export class Manager {
     for (const timer of this.retries.values()) clearTimeout(timer);
     if (this.authCheckTimer) clearInterval(this.authCheckTimer);
     for (const runtime of this.runtimes.values()) runtime.abort.abort();
-    await Promise.all([...this.workers.values()].map((w) => terminate(w)));
+    for (const runtime of this.replacementRuntimes) runtime.abort.abort();
+    await Promise.all([...this.allWorkers].map((w) => terminate(w)));
     this.workers.clear();
     await Promise.allSettled(this.operations);
     await Promise.all([...this.runtimes.values()].map((r) => r.close()));
@@ -1009,7 +1182,8 @@ export class Manager {
     this.web?.close();
     // A lost database session must not leave an old relay host serving traffic.
     for (const runtime of this.runtimes.values()) runtime.abort.abort();
-    for (const worker of this.workers.values()) worker.kill("SIGKILL");
+    for (const runtime of this.replacementRuntimes) runtime.abort.abort();
+    for (const worker of this.allWorkers) worker.kill("SIGKILL");
     this.squid?.kill("SIGKILL");
   }
 }

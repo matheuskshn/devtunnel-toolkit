@@ -3,7 +3,7 @@ import path from "node:path";
 
 // Release automation runs on Unix hosts with system-managed tools. Never search
 // the inherited PATH, a checkout directory, or an operator-supplied executable.
-const commands = new Set(["git", "docker", "skopeo"]);
+const commands = new Set(["git", "docker", "skopeo", "tar", "unzip"]);
 export function trustedExecutable(command) {
   if (!commands.has(command) || process.platform === "win32") {
     throw new Error("UNSUPPORTED_AUTOMATION_EXECUTABLE");

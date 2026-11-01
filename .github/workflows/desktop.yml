@@ -1,0 +1,183 @@
+name: Desktop app
+on:
+  pull_request:
+    paths:
+      - "assets/branding/devtunnel-toolkit-logo/**"
+      - "apps/desktop/**"
+      - ".github/workflows/desktop.yml"
+      - ".github/scripts/desktop-release*"
+      - ".github/scripts/trusted-executable.mjs"
+      - ".github/scripts/install-security-tools.sh"
+      - "version.txt"
+  push:
+    branches: [main]
+    paths:
+      - "assets/branding/devtunnel-toolkit-logo/**"
+      - "apps/desktop/**"
+      - ".github/workflows/desktop.yml"
+      - ".github/scripts/desktop-release*"
+      - ".github/scripts/trusted-executable.mjs"
+      - ".github/scripts/install-security-tools.sh"
+      - "version.txt"
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: true
+      package:
+        type: boolean
+        default: true
+permissions:
+  contents: read
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  check:
+    name: Check ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: apps/desktop/global.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - run: dotnet restore DevTunnelToolkit.slnx --locked-mode
+      - run: dotnet format DevTunnelToolkit.slnx --verify-no-changes --no-restore
+      - run: dotnet build DevTunnelToolkit.slnx -c Release --no-restore
+      - run: dotnet test DevTunnelToolkit.slnx -c Release --no-build --no-restore --logger trx --results-directory TestResults
+      - run: node scripts/audit.mjs
+      - run: node --test scripts/*.test.mjs
+      - if: runner.os == 'Linux'
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Validate Windows packaging script syntax
+        shell: pwsh
+        run: |
+          foreach ($script in @('packaging/windows/configure-startup.ps1', 'scripts/install-inno.ps1', 'scripts/test-installer.ps1')) {
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PWD $script), [ref]$null, [ref]$parseErrors)
+            if ($parseErrors.Count) { throw "PowerShell syntax errors in $script." }
+          }
+      - name: Install verified security tools
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: bash .github/scripts/install-security-tools.sh "$RUNNER_TEMP/desktop-security"
+      - name: Scan desktop source and resolved dependencies
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |
+          "$RUNNER_TEMP/desktop-security/gitleaks" dir --redact --no-banner apps/desktop
+          "$RUNNER_TEMP/desktop-security/trivy" fs --scanners vuln --exit-code 1 --timeout 10m --skip-dirs apps/desktop/artifacts apps/desktop
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: desktop-tests-${{ matrix.os }}
+          path: apps/desktop/TestResults/**/*.trx
+          if-no-files-found: warn
+          retention-days: 14
+  package:
+    name: Package ${{ matrix.rid }}
+    needs: check
+    if: github.event_name != 'pull_request' && (inputs.ref == '' || inputs.package)
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            rid: linux-x64
+          - os: ubuntu-24.04
+            rid: linux-arm64
+          - os: windows-2025
+            rid: win-x64
+          - os: windows-2025
+            rid: win-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: apps/desktop
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: apps/desktop/global.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Install pinned Microsoft SBOM tool
+        run: dotnet tool install Microsoft.Sbom.DotNetTool --version 4.1.13 --tool-path (Join-Path $env:RUNNER_TEMP 'desktop-sbom') --allow-roll-forward
+      - name: Install verified Inno Setup compiler
+        if: runner.os == 'Windows'
+        run: |
+          $compiler = Join-Path $env:RUNNER_TEMP 'desktop-inno/ISCC.exe'
+          & ./scripts/install-inno.ps1 -Destination (Split-Path -Parent $compiler) | Out-Null
+          "INNO_COMPILER=$compiler" >> $env:GITHUB_ENV
+      - name: Publish and package
+        env:
+          DESKTOP_RID: ${{ matrix.rid }}
+        run: |
+          $env:SBOM_TOOL = Join-Path $env:RUNNER_TEMP 'desktop-sbom/sbom-tool'
+          if ($IsWindows) { $env:SBOM_TOOL += '.exe' }
+          node scripts/package.mjs --rid $env:DESKTOP_RID
+      - name: Install, run and uninstall Windows x64 package
+        if: matrix.rid == 'win-x64'
+        run: |
+          $version = (Get-Content ../../version.txt -Raw).Trim()
+          $installer = Join-Path $PWD "artifacts/devtunnel-toolkit-desktop-$version-win-x64-setup.exe"
+          & ./scripts/test-installer.ps1 -InstallerPath $installer -ExpectedVersion $version
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-desktop-${{ matrix.rid }}
+          path: apps/desktop/artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+  scan-packages:
+    name: Scan package ${{ matrix.rid }}
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [linux-x64, linux-arm64, win-x64, win-arm64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-desktop-${{ matrix.rid }}
+          path: ${{ runner.temp }}/desktop-package
+      - run: bash .github/scripts/install-security-tools.sh "$RUNNER_TEMP/desktop-security"
+      - name: Verify archives and scan packaged dependencies and secrets
+        env:
+          DESKTOP_RID: ${{ matrix.rid }}
+        run: |
+          version="$(tr -d '\r\n' < version.txt)"
+          stem="devtunnel-toolkit-desktop-$version-$DESKTOP_RID"
+          extension=tar.gz
+          if [[ "$DESKTOP_RID" == win-* ]]; then extension=zip; fi
+          cd "$RUNNER_TEMP/desktop-package"
+          sha256sum -c "$stem.$extension.sha256"
+          if [[ "$DESKTOP_RID" == win-* ]]; then sha256sum -c "$stem-setup.exe.sha256"; fi
+          "$RUNNER_TEMP/desktop-security/trivy" sbom --exit-code 1 --timeout 10m "$stem.spdx.json"
+          python3 "$GITHUB_WORKSPACE/apps/desktop/scripts/extract-package.py" "$stem.$extension" "$RUNNER_TEMP/desktop-extracted"
+          "$RUNNER_TEMP/desktop-security/gitleaks" dir --redact --no-banner "$RUNNER_TEMP/desktop-extracted"
+          "$RUNNER_TEMP/desktop-security/trivy" fs --scanners vuln --exit-code 1 --timeout 10m "$RUNNER_TEMP/desktop-extracted"

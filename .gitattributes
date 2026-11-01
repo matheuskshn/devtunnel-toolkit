@@ -1,3 +1,7 @@
 .gitattributes text eol=lf
 docker/devtunnel-entrypoint text eol=lf
 images/*/*-entrypoint text eol=lf
+*.cs text eol=lf
+*.csproj text eol=lf
+*.props text eol=lf
+*.slnx text eol=lf

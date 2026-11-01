@@ -292,5 +292,7 @@ test("Hub build context is source-only", async () => {
   assert.doesNotMatch(ignore, /!tests|!examples|!data|!\.env/);
   const dockerfile = await read("../Dockerfile");
   assert.match(dockerfile, /USER 1000:1000/);
-  assert.match(dockerfile, /sha256sum -c -/);
+  assert.match(dockerfile, /COPY --from=cli \/out\/ \/opt\/devtunnel\//);
+  assert.match(dockerfile, /install-managed-cli\.mjs/);
+  assert.doesNotMatch(dockerfile, /DOTNET_BUNDLE_EXTRACT_BASE_DIR/);
 });

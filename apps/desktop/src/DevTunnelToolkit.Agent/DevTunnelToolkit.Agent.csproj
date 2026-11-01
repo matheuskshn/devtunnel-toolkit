@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <ApplicationIcon>../../packaging/branding/app.ico</ApplicationIcon>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../DevTunnelToolkit.Application/DevTunnelToolkit.Application.csproj" />
+    <ProjectReference Include="../DevTunnelToolkit.DevTunnels/DevTunnelToolkit.DevTunnels.csproj" />
+    <ProjectReference Include="../DevTunnelToolkit.Persistence/DevTunnelToolkit.Persistence.csproj" />
+    <ProjectReference Include="../DevTunnelToolkit.Ipc/DevTunnelToolkit.Ipc.csproj" />
+  </ItemGroup>
+</Project>

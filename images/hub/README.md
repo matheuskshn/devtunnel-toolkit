@@ -64,8 +64,14 @@ hub session remove user-a
 
 O ID local é opcional em `hub session add`; quando omitido, o Hub gera um ID
 opaco. `connect` valida ou solicita o login e inicia o túnel em uma única ação.
-`reconnect` para o relay, limpa o login armazenado, exige nova autenticação da
-mesma identidade e inicia o túnel novamente. As ações individuais `login` e
+`reconnect` autentica a mesma identidade em um diretório de credenciais separado,
+valida o recurso remoto existente e tenta conectar um relay novo. A sessão atual
+permanece disponível durante a autenticação e a validação. O processo anterior e
+suas credenciais locais só são retirados após a confirmação da nova conexão e a
+gravação do estado. Uma falha anterior à troca preserva a sessão atual; uma falha
+durante a troca tenta restaurar o relay com as credenciais anteriores. O serviço
+permite um host por túnel, portanto a troca pode interromper streams existentes e
+não garante continuidade sem pausas. As ações individuais `login` e
 `start` continuam disponíveis para diagnóstico e automação avançada.
 `configure` altera a janela deslizante de inatividade do recurso e as estimativas
 de validade/aviso do login. O serviço continua sendo a fonte da expiração real.
@@ -85,6 +91,24 @@ de validade/aviso do login. O serviço continua sendo a fonte da expiração rea
 - `remove` logs out and tombstones the session. It does **not** delete a remote
   tunnel or erase storage/backups. Names, IDs and listener allocations are never
   recycled. Remote deletion is a separate, explicit administrator operation.
+
+Reconnect never logs out the active CLI cache or changes the remote tunnel's ports
+or ACLs. A missing or incompatible remote resource fails preflight. PostgreSQL
+keeps candidate credentials out of the active row until atomic promotion; filesystem
+storage records a private credential-generation directory only after connection.
+Back up the private state before upgrading: older versions do not understand the
+new credential-home reference, so downgrade needs the matching pre-upgrade backup.
+Relay disconnection is recorded and a permanently disconnected worker exits instead
+of remaining falsely active. Transient metadata refresh failure preserves the relay;
+authorization and validated policy failures still stop it.
+
+Before promoting a replacement, its worker also connects a temporary client to that
+specific host ID through the relay and checks HTTP OPTIONS and the SOCKS5 greeting
+for the published proxy ports. It binds no local client sockets, sends no credentials
+to a destination and follows no application URLs. The probe has a 15-second deadline;
+the candidate relay has a 90-second readiness deadline. A response such as HTTP 403
+proves proxy transport, not destination access. Failed promotion preserves an old
+worker that still confirms connected; otherwise rollback attempts to restore it.
 
 Session IDs must be lowercase letters/digits/hyphens, 3-32 characters; names must
 be 3-49 characters. A name collision fails, without inventing a random suffix or
@@ -520,6 +544,16 @@ configuration, Azure Files for data, and `/tmp/hub` for ephemeral runtime files.
 one replica. Register shares in the managed environment separately; keep all
 real Azure identifiers, keys and final manifests outside this repository.
 
+Declare all three ACA probes explicitly on the manager health port (default
+`8080`): Startup and Liveness use `/live`; Readiness uses `/ready`. Allow startup
+time for storage leadership handoff before the manager opens its listener. The
+examples allow ten minutes. These probes must remain independent of the optional
+web console. When disabling `HUB_WEB_ENABLED`, remove unused web ingress and its
+HTTP scaling rule, and replace any platform-generated probes targeting the web
+port. Keep at least one replica and do not expose the health port externally.
+After deployment, verify the new revision is ready, old revisions have stopped,
+and restart counts remain stable across multiple former failure cycles.
+
 The [PostgreSQL ACA template](examples/aca/containerapp.postgres.yaml) instead
 uses database persistence, platform secret references and ephemeral `/tmp/hub`.
 No Azure Files share or storage mount is needed. Provision the database and ACA
@@ -560,6 +594,38 @@ not implement that restriction. The repository does not suppress this warning.
 
 ## Local verification and release gates
 
+### CLI runtime servicing
+
+The image runs the unchanged Microsoft Dev Tunnels CLI application assemblies
+with the separately pinned .NET 10.0.14 framework. The vendor's 1.0.2115 bundle
+contains a trimmed 10.0.12 framework; installing another runtime beside that
+self-contained executable would leave its original runtime active.
+
+The build verifies the vendor bundle's SHA-256 and the official runtime archive's
+SHA-512, reads the documented .NET bundle format, and retains application and
+third-party files byte for byte. It excludes the entire old runtime inventory,
+creates framework-dependent runtime/dependency configuration, and rejects any
+application-local assembly that would shadow the new framework. This is Toolkit
+packaging of vendor object code, not a rebuild of the vendor's application.
+Both Toolkit and Hub images use the same packaging recipe.
+
+`/opt/devtunnel/evidence/packaging.json` records source hashes, retained-file hashes,
+excluded-runtime hashes and installed runtime identity. The official runtime's
+license and third-party notices are retained under `/opt/devtunnel/dotnet`.
+No old vendor executable or old framework assembly is shipped. The build and
+container smoke verify which CoreCLR is actually loaded; normal image scans remain
+enabled. Authentication, CLI compatibility and native architecture tests remain
+release gates.
+
+Update `bin/devtunnel-runtime.json` and the packaging checks together when upstream
+changes the CLI bundle or framework. Unknown layouts and changed source hashes
+fail closed. Update images through their build pipeline; the unprivileged Hub
+cannot replace the root-owned CLI launcher with an interactive CLI update.
+
+References: [.NET deployment models](https://learn.microsoft.com/en-us/dotnet/core/deploying/),
+[`dotnet exec` configuration](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet),
+[bundle layout](https://github.com/dotnet/runtime/blob/main/src/installer/managed/Microsoft.NET.HostModel/Bundle/Manifest.cs).
+
 ### Native packager coverage
 
 `npm run test:coverage` includes unexecuted native JavaScript in its inventory.
@@ -597,6 +663,10 @@ with the invoking user's ownership. Reports remain ignored by Git. No production
 account, host home, Docker socket or runtime data is mounted into the build stage.
 
 ### Application checks
+
+Coverage tooling pins patched `glob` and `minimatch` through the `test-exclude`
+override until its upstream dependency ranges include those releases. Run the full
+coverage suite and audit, including development dependencies, when updating it.
 
 ```sh
 cd images/hub

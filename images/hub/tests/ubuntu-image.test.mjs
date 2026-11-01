@@ -40,7 +40,9 @@ test("Default Ubuntu LTS and compatibility Dockerfiles have identical build and 
   );
   assert.match(candidate, /^FROM ubuntu:26\.04@sha256:[a-f0-9]{64}$/m);
   assert.match(candidate, /libicu78/);
-  assert.doesNotMatch(candidate, /libicu76|trusted=yes|allow-unauthenticated/);
+  assert.doesNotMatch(candidate, /trusted=yes|allow-unauthenticated/);
+  const runtime = candidate.slice(candidate.lastIndexOf("FROM ubuntu:26.04"));
+  assert.doesNotMatch(runtime, /libicu76/);
   assert.match(
     candidate,
     /apt-get update && sh \/tmp\/use-gnu-coreutils validate-plan\s+\\\n\s+&& apt-get install -y --no-install-recommends --allow-remove-essential\s+\\\n\s+coreutils-from-gnu coreutils-from-uutils- rust-coreutils-\s+\\\n\s+&& sh \/tmp\/use-gnu-coreutils verify-installed/,
@@ -66,9 +68,10 @@ test("Default Ubuntu LTS and compatibility Dockerfiles have identical build and 
     candidate.split("COPY --from=build /usr/local/bin/node").at(-1),
     baseline.split("COPY --from=build /usr/local/bin/node").at(-1),
   );
-  const cli =
-    /RUN case "\$\{TARGETARCH\}"[\s\S]*?&& apt-get purge -y --auto-remove curl/;
-  assert.equal(candidate.match(cli)?.[0], baseline.match(cli)?.[0]);
+  assert.match(candidate, /AS cli\n/);
+  assert.match(candidate, /install-managed-cli\.mjs/);
+  assert.match(candidate, /COPY --from=cli \/out\/ \/opt\/devtunnel\//);
+  assert.doesNotMatch(candidate, /DOTNET_BUNDLE_EXTRACT_BASE_DIR/);
 });
 
 test("native rebuild uses pinned sources, upstream regressions and registered packages", async () => {
@@ -234,10 +237,20 @@ test("GNU provider verification rejects incomplete replacement and a dirty packa
       '#!/bin/sh\nif test "$TEST_CASE" = dirty; then printf broken; fi\n',
       { mode: 0o755 },
     );
+    // Exercise provider verification independently of the runner's utility provider.
+    for (const utility of [
+      "cp", "mv", "rm", "mkdir", "id", "env", "sort", "sha256sum",
+    ]) {
+      await writeFile(
+        path.join(directory, utility),
+        '#!/bin/sh\nif test "$TEST_CASE" = non-gnu; then printf "utility (uutils coreutils) 1.0\\n"; else printf "utility (GNU coreutils) 9.0\\n"; fi\n',
+        { mode: 0o755 },
+      );
+    }
     const script = fileURLToPath(
       new URL("../bin/use-gnu-coreutils", import.meta.url),
     );
-    for (const state of ["ok", "missing", "rust", "dirty"]) {
+    for (const state of ["ok", "missing", "rust", "dirty", "non-gnu"]) {
       const result = spawnSync("/bin/sh", [script, "verify-installed"], {
         encoding: "utf8",
         timeout: 5000,

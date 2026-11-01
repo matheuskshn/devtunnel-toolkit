@@ -164,14 +164,15 @@ export class SessionRuntime {
   private queue: Promise<unknown> = Promise.resolve();
   readonly abort = new AbortController();
   constructor(
-    readonly session: Session,
+    public session: Session,
     readonly dataDir: string,
     readonly runDir: string,
     readonly onFailure: () => void,
     readonly allowedTenants: string[] = [],
     readonly persistence?: Persistence,
   ) {
-    const home = path.join(dataDir, "sessions", session.id, "home");
+    check(session.credential_generation === undefined || /^[a-f0-9]{32}$/.test(session.credential_generation), "INVALID_CREDENTIAL_GENERATION");
+    const home = path.join(dataDir, "sessions", session.id, session.credential_generation ?? "home");
     this.env = {
       ...cleanEnvironment(),
       HOME: home,
@@ -269,6 +270,11 @@ export class SessionRuntime {
     this.queue = task.catch(() => {});
     return task;
   }
+  async quiescent<T>(action: () => Promise<T>): Promise<T> {
+    const task = this.queue.then(action);
+    this.queue = task.catch(() => {});
+    return task;
+  }
   async identity(): Promise<Identity> {
     const identity = parseIdentity(
       parseJson(await this.cli(["user", "show", "--json"])),
@@ -347,6 +353,14 @@ export class SessionRuntime {
       ...privateTunnel(details, this.session),
       accessTokens: details.accessTokens,
     };
+  }
+  async clientCredentials(): Promise<Tunnel> {
+    const tunnel = await this.credentials();
+    const response = parseJson(await this.cli(["token", this.session.tunnel_id!, "--scopes", "connect", "--json"]));
+    const token = response.token ?? response.accessToken;
+    check(typeof token === "string" && token.length > 20, "TOKEN_SCHEMA_UNSUPPORTED");
+    bindIdentity(this.session, await this.identity());
+    return { ...tunnel, accessTokens: { connect: token } };
   }
   async details(): Promise<Tunnel> {
     check(this.session.tunnel_id, "TUNNEL_NOT_PROVISIONED");

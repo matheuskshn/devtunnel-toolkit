@@ -1,0 +1,17 @@
+{
+  "cliVersion": "1.0.2115",
+  "runtimeVersion": "10.0.14",
+  "source": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json",
+  "architectures": {
+    "amd64": {
+      "rid": "linux-x64",
+      "cliSha256": "723d6aebdc226064aef321258fb17c8a2770c9cc2bd05004c0fb83e72b302c3f",
+      "runtimeSha512": "634326028645f38731c8c4e71a68356e4ca0d6b6607139a234ab760687f742063edaf33a1f20dda615742d2dc8300ca2ff857619d51fbb38090383b71334af89"
+    },
+    "arm64": {
+      "rid": "linux-arm64",
+      "cliSha256": "b537f270a55d57f23b7621cec0b09806aa9ada119713b33e9255284179b76bde",
+      "runtimeSha512": "99e1d6eb5d3de935853404fd378c77cbf813bd3ae094837b5a589000a492c289bf0d01d8a6bff99b4470572d9f85dc0b41239b5b7801e031197b83d527cdfeb2"
+    }
+  }
+}

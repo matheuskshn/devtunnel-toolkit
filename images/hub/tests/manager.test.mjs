@@ -61,32 +61,12 @@ test('one pending login does not block another session; duplicate operations are
   await assert.rejects(m.dispatch(['session','stop','user-a'],()=>{}),/SESSION_BUSY/);
   release();await pending;
 });
-test('connect authenticates then starts, while reconnect clears the cache before doing both',async t=>{
-  const m=await manager(t);const events=[];
-  await m.dispatch(['session','add','user-a','--provider','github'],()=>{});
-  const s=m.store.get('user-a');
-  const active={login:async()=>{events.push('login');bindIdentity(s,{provider:'github',user_id:'github:1001',user_login:'user-a'});}};
-  m.runtime=async()=>active;
+test('connect validates cached login and starts the session',async t=>{
+  const m=await manager(t),s=m.store.add('user-a','github'),events=[];
+  m.runtime=async()=>({login:async()=>{events.push('login');bindIdentity(s,{provider:'github',user_id:'github:1001',user_login:'user-a'});}});
   m.start=async session=>{events.push('start');session.status='running';session.desired=true;};
   await m.dispatch(['session','connect','user-a'],()=>{});
   assert.deepEqual(events,['login','start']);assert.equal(s.status,'running');
-
-  const previous={cli:async args=>events.push(args.join(' ')),close:async()=>events.push('close')};
-  const renewed={login:async()=>{events.push('reauthenticate');bindIdentity(s,{provider:'github',user_id:'github:1001',user_login:'user-a'});}};
-  let calls=0;m.runtime=async()=>calls++===0?previous:renewed;
-  await m.dispatch(['session','reconnect','user-a'],()=>{});
-  assert.deepEqual(events.slice(2),['user logout','close','reauthenticate','start']);
-  assert.equal(s.status,'running');
-});
-test('reconnect continues when an expired cache is already logged out',async t=>{
-  const m=await manager(t);const s=m.store.add('user-a','github');
-  s.identity={provider:'github',user_id:'github:1001',user_login:'user-a'};
-  const previous={cli:async()=>{throw new HubError('AUTH_REQUIRED');},close:async()=>{}};
-  const renewed={login:async()=>bindIdentity(s,{...s.identity})};
-  let calls=0;m.runtime=async()=>calls++===0?previous:renewed;
-  m.start=async session=>{session.status='running';};
-  await m.dispatch(['session','reconnect','user-a'],()=>{});
-  assert.equal(s.status,'running');
 });
 test('expired auth fails only its session and never retries indefinitely',async t=>{
   const m=await manager(t);const a=m.store.add('user-a','github');const b=m.store.add('user-b','github');
