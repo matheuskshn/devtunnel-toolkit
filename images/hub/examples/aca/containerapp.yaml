@@ -27,6 +27,12 @@ properties:
         volumeMounts:
           - {volumeName: data, mountPath: /data}
         probes:
+          # Probe manager health independently of the optional web console.
+          - type: Startup
+            httpGet: {path: /live, port: 8080}
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 120
           - type: Liveness
             httpGet: {path: /live, port: 8080}
             initialDelaySeconds: 10

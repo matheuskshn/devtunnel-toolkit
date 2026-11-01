@@ -34,6 +34,13 @@ properties:
           - {name: HUB_ALLOWED_PORTS, value: "80,443"}
           - {name: HUB_CONNECT_PORTS, value: "443"}
         probes:
+          # Allow coordinated leadership handoff before the manager opens its port.
+          # Explicit Startup prevents ACA from probing an optional ingress port.
+          - type: Startup
+            httpGet: {path: /live, port: 8080}
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 120
           - type: Liveness
             httpGet: {path: /live, port: 8080}
             initialDelaySeconds: 10

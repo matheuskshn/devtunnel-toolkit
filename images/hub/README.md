@@ -544,6 +544,16 @@ configuration, Azure Files for data, and `/tmp/hub` for ephemeral runtime files.
 one replica. Register shares in the managed environment separately; keep all
 real Azure identifiers, keys and final manifests outside this repository.
 
+Declare all three ACA probes explicitly on the manager health port (default
+`8080`): Startup and Liveness use `/live`; Readiness uses `/ready`. Allow startup
+time for storage leadership handoff before the manager opens its listener. The
+examples allow ten minutes. These probes must remain independent of the optional
+web console. When disabling `HUB_WEB_ENABLED`, remove unused web ingress and its
+HTTP scaling rule, and replace any platform-generated probes targeting the web
+port. Keep at least one replica and do not expose the health port externally.
+After deployment, verify the new revision is ready, old revisions have stopped,
+and restart counts remain stable across multiple former failure cycles.
+
 The [PostgreSQL ACA template](examples/aca/containerapp.postgres.yaml) instead
 uses database persistence, platform secret references and ephemeral `/tmp/hub`.
 No Azure Files share or storage mount is needed. Provision the database and ACA
