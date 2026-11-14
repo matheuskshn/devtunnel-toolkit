@@ -99,7 +99,7 @@ storage records a private credential-generation directory only after connection.
 Back up the private state before upgrading: older versions do not understand the
 new credential-home reference, so downgrade needs the matching pre-upgrade backup.
 Relay disconnection is recorded and a permanently disconnected worker exits instead
-of remaining falsely active. Transient metadata refresh failure preserves the relay;
+of remaining falsely active. Sanitized `session_relay_diagnostic` events identify startup, disconnection and data-path failures with allowlisted HTTP, network or SSH reason codes. Provider messages, URLs, identities and credentials are never included. Transient metadata refresh failure preserves the relay;
 authorization and validated policy failures still stop it.
 
 Before promoting a replacement, its worker also connects a temporary client to that

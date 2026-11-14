@@ -296,3 +296,12 @@ test("Hub build context is source-only", async () => {
   assert.match(dockerfile, /install-managed-cli\.mjs/);
   assert.doesNotMatch(dockerfile, /DOTNET_BUNDLE_EXTRACT_BASE_DIR/);
 });
+
+
+test("diagnostic image inherits the pinned runtime without changing its execution configuration", async () => {
+  const source = await read("../Dockerfile");
+  const diagnostic = source.slice(source.lastIndexOf("\nFROM ") + 1);
+  assert.match(diagnostic, /^FROM ghcr\.io\/matheuskshn\/devtunnel-toolkit-hub@sha256:[a-f0-9]{64} AS diagnostic/m);
+  assert.deepEqual([...diagnostic.matchAll(/^COPY --from=build \/build\/dist\/([a-z-]+\.js) \/opt\/hub\/dist\/\1$/gm)].map(match => match[1]).sort(), ["manager.js", "relay-diagnostics.js", "worker.js"]);
+  assert.doesNotMatch(diagnostic, /^(?:ENV|USER|ENTRYPOINT|CMD|EXPOSE|VOLUME|RUN|HEALTHCHECK)\s/m);
+});

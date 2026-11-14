@@ -91,3 +91,9 @@ ENV HOME=/home/hub
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s CMD ["hub", "health"]
 ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/usr/local/bin/hub"]
 CMD ["serve"]
+
+# Diagnostic-only branch: preserve the deployed runtime and replace only error reporting.
+FROM ghcr.io/matheuskshn/devtunnel-toolkit-hub@sha256:9d737c8712cb543923aa457361682f66304ab320ec36266e3d5a512ffa8ff4aa AS diagnostic
+COPY --from=build /build/dist/relay-diagnostics.js /opt/hub/dist/relay-diagnostics.js
+COPY --from=build /build/dist/worker.js /opt/hub/dist/worker.js
+COPY --from=build /build/dist/manager.js /opt/hub/dist/manager.js

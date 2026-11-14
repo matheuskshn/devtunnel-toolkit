@@ -1,3 +1,4 @@
+import {reportRelayDiagnostic} from './relay-diagnostics.js';
 import { TunnelManagementHttpClient, ManagementApiVersions } from '@microsoft/dev-tunnels-management';
 import type { Tunnel } from '@microsoft/dev-tunnels-contracts';
 import { MappedTunnelHost } from './mapped-host.js';
@@ -32,8 +33,8 @@ async function stop(code: number): Promise<void> {
 }
 process.on('SIGTERM', () => void stop(0));
 process.on('disconnect', () => void stop(0));
-process.on('uncaughtException', () => void stop(1));
-process.on('unhandledRejection', () => void stop(1));
+process.on('uncaughtException', error => void reportRelayDiagnostic(error, 'UNCAUGHT').finally(() => stop(1)));
+process.on('unhandledRejection', error => void reportRelayDiagnostic(error, 'UNHANDLED').finally(() => stop(1)));
 process.on('message', async (message: any) => {
   if (message.type === 'health') {
     process.send?.({type:'health', id:message.id, status:host?.connectionStatus ?? 'disconnected'});
@@ -64,7 +65,7 @@ process.on('message', async (message: any) => {
     host.refreshingTunnel(e => { e.tunnelPromise = credentials(); });
     host.connectionStatusChanged(e => {
       process.send?.({ type: 'status', status: e.status });
-      if (e.status === 'disconnected' && !stopping) void stop(host?.disconnectReason === SshDisconnectReason.tooManyConnections ? 78 : 1);
+      if (e.status === 'disconnected' && !stopping) void reportRelayDiagnostic(host?.disconnectError, 'DISCONNECT', host?.disconnectReason).finally(() => stop(host?.disconnectReason === SshDisconnectReason.tooManyConnections ? 78 : 1));
     });
     const tunnel = await credentials();
     process.send?.({type:'relay_connecting'});
@@ -73,7 +74,8 @@ process.on('message', async (message: any) => {
       try {
         await verifyHostedProxy(management, await credentials('connect'), host.relayHostId,
           [{port: message.proxyPort, socks:false}, ...(message.socks ? [{port:message.socks.proxyPort, socks:true}] : [])]);
-      } catch {
+      } catch (error) {
+        await reportRelayDiagnostic(error, 'DATA_PATH', host?.disconnectReason);
         process.send?.({type:'failure', code:'RECONNECT_DATA_PATH_FAILED'});
         await stop(1); return;
       }
@@ -88,5 +90,5 @@ process.on('message', async (message: any) => {
         else process.send?.({ type: 'maintenance', code: 'METADATA_REFRESH_FAILED' });
       }).finally(() => { refreshing = false; });
     }, message.maintenanceSeconds * 1000);
-  } catch { await stop(1); }
+  } catch (error) { await reportRelayDiagnostic(error, 'STARTUP', host?.disconnectReason); await stop(1); }
 });

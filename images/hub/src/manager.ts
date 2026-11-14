@@ -1,3 +1,4 @@
+import {isRelayDiagnosticCode} from "./relay-diagnostics.js";
 import {
   createServer as createSocketServer,
   createConnection,
@@ -492,6 +493,7 @@ export class Manager {
         void this.fail(s, new HubError("WORKER_FAILED"));
     });
     worker.on("message", (message: any) => {
+      if (message.type === "diagnostic" && isRelayDiagnosticCode(message.code)) this.log("session_relay_diagnostic", s, message.code);
       if (message.type === "maintenance") this.log("session_metadata_stale", s, "METADATA_REFRESH_FAILED");
       if (message.type === "credentials") {
         this.track(this.credentialsForWorker(s, runtime, worker, message.id, message.scope));
@@ -711,6 +713,7 @@ export class Manager {
       // Handlers stay attached after promotion, but never dispatch candidate
       // failures into fail(s) while the old session is still active.
       activeWorker.on("message", (message: any) => {
+      if (message.type === "diagnostic" && isRelayDiagnosticCode(message.code)) this.log("session_relay_diagnostic", s, message.code);
         if (message.type === "status") relayStatus = message.status;
         if (message.type === "relay_connecting") handoff = true;
         if (message.type === "failure" && message.code === "RECONNECT_DATA_PATH_FAILED") rejectReady(new HubError("RECONNECT_DATA_PATH_FAILED"));
