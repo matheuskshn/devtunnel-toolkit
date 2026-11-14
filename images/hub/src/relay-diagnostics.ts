@@ -7,13 +7,13 @@ export function relayDiagnosticCode(error: unknown, stage: RelayDiagnosticStage,
   let current = error;
   for (let depth = 0; current && typeof current === 'object' && depth < 8 && !seen.has(current); depth++) {
     seen.add(current);
-    const e = current as { message?: unknown; code?: unknown; statusCode?: unknown; status?: unknown; cause?: unknown; innerError?: unknown; response?: { status?: unknown } };
-    const numeric = e.statusCode ?? e.status ?? e.response?.status;
+    const e = current as { message?: unknown; code?: unknown; statusCode?: unknown; status?: unknown; cause?: unknown; innerError?: unknown; response?: { status?: unknown }; errorContext?: { statusCode?: unknown } };
+    const numeric = e.statusCode ?? e.status ?? e.response?.status ?? e.errorContext?.statusCode;
     if (typeof numeric === 'number' && Number.isInteger(numeric) && numeric >= 100 && numeric <= 599)
       return `RELAY_${stage}_HTTP_${numeric}`;
     if (typeof e.code === 'string' && systemCodes.has(e.code)) return `RELAY_${stage}_${e.code}`;
     const message = typeof e.message === 'string' ? e.message : '';
-    const http = /(?:unexpected server response|HTTP status(?: code)?|status code)[^0-9]{0,10}([1-5][0-9]{2})\b/i.exec(message);
+    const http = /(?:unexpected server response|HTTP status(?: code)?|status code|Service temporarily unavailable|Rate limit exceeded|Not authorized|Forbidden)[^0-9]{0,10}([1-5][0-9]{2})\b/i.exec(message);
     if (http) return `RELAY_${stage}_HTTP_${http[1]}`;
     if (/no hosts are currently accepting connections/i.test(message)) return `RELAY_${stage}_NO_HOST`;
     current = e.cause ?? e.innerError;
