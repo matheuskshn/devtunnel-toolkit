@@ -766,3 +766,12 @@ References: [Dev Tunnels CLI](https://learn.microsoft.com/en-us/azure/developer/
 Storage references: [PostgreSQL advisory locks](https://www.postgresql.org/docs/16/explicit-locking.html#ADVISORY-LOCKS),
 [node-postgres TLS](https://node-postgres.com/features/ssl),
 [ACA secrets](https://learn.microsoft.com/en-us/azure/container-apps/manage-secrets).
+
+### Diagnostic branch servicing
+
+The diagnostic image derives from the pinned deployed runtime. Its publication
+scan also requires the Ubuntu APT security update and the official 10.0.15
+WebUtilities package with its Headers/Primitives dependency closure. Packages are
+SHA-512 pinned from NuGet; original CLI application provenance is retained with
+explicit serviced-library records and package archives. The CLI core binary,
+credential mechanisms and runtime policy remain unchanged.

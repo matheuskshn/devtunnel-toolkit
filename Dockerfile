@@ -7,9 +7,14 @@ ARG TARGETARCH
 ARG DEVTUNNEL_ENV=prod
 ARG DEVTUNNEL_VERSION=1.0.2115
 ARG DEVTUNNEL_SHA256
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libicu76
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libicu76 unzip
 COPY images/hub/bin/managed-cli.mjs images/hub/bin/install-managed-cli.mjs images/hub/bin/devtunnel-runtime.json /build-tools/
 RUN node /build-tools/install-managed-cli.mjs "$TARGETARCH" "$DEVTUNNEL_VERSION" "$DEVTUNNEL_SHA256" "$DEVTUNNEL_ENV"
+COPY images/hub/bin/service-cli-libraries.mjs images/hub/bin/cli-library-patches.json /build-tools/
+RUN node /build-tools/service-cli-libraries.mjs /out/cli /out/evidence/packaging.json /serviced \
+    && cp -a /serviced/cli/. /out/cli/ \
+    && cp -a /serviced/evidence/. /out/evidence/ \
+    && cp /build-tools/cli-library-patches.json /out/evidence/cli-library-patches.json
 
 # Use the same source-verified library recipe as the Hub, compiled for Ubuntu's ABI.
 FROM ubuntu:26.04@sha256:513c074113a871b51a8d16ab445c88779d6452d937a164fb5cc479f32668a41d AS native

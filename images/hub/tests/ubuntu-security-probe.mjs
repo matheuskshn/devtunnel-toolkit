@@ -15,8 +15,24 @@ assert.ok([1000, 10001].includes(expectedUid));
 const cliEvidence = JSON.parse(fs.readFileSync("/opt/devtunnel/evidence/packaging.json"));
 assert.equal(cliEvidence.deployment, "framework-dependent");
 assert.equal(cliEvidence.installedRuntime, "10.0.14");
+const serviced = cliEvidence.servicedLibraries ?? [];
+if (serviced.length) {
+  const manifest = JSON.parse(fs.readFileSync("/opt/devtunnel/evidence/cli-library-patches.json"));
+  assert.deepEqual(serviced.map(p => p.name), ["Microsoft.AspNetCore.WebUtilities", "Microsoft.Net.Http.Headers", "Microsoft.Extensions.Primitives"]);
+  for (const patch of serviced) {
+    const pin = manifest.packages.find(p => p.name === patch.name);
+    assert.equal(patch.version, "10.0.15");
+    assert.equal(patch.sha512, pin.sha512);
+    assert.equal(patch.source, pin.source);
+    assert.equal(createHash("sha512").update(fs.readFileSync(`/opt/devtunnel/evidence/nuget/${patch.name}.${patch.version}.nupkg`)).digest("hex"), pin.sha512);
+    assert.equal(createHash("sha256").update(fs.readFileSync(`/opt/devtunnel/cli/${patch.filename}`)).digest("hex"), patch.sha256);
+    assert.notEqual(patch.filename, "devtunnel.dll");
+  }
+}
 for (const file of cliEvidence.applicationFiles) {
-  assert.equal(createHash("sha256").update(fs.readFileSync(`/opt/devtunnel/cli/${file.name}`)).digest("hex"), file.sha256);
+  const patch = serviced.find(p => p.filename === file.name);
+  if (patch) assert.equal(patch.originalSha256, file.sha256);
+  assert.equal(createHash("sha256").update(fs.readFileSync(`/opt/devtunnel/cli/${file.name}`)).digest("hex"), patch?.sha256 ?? file.sha256);
 }
 for (const file of cliEvidence.excludedRuntimeFiles) {
   assert.equal(fs.existsSync(`/opt/devtunnel/cli/${file.name}`), false);

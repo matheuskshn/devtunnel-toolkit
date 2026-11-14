@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "advisory": "https://github.com/dotnet/aspnetcore/security/advisories/GHSA-x33c-w48q-qrgc",
+  "cliVersion": "1.0.2115",
+  "packages": [
+    {
+      "name": "Microsoft.AspNetCore.WebUtilities",
+      "version": "10.0.15",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.aspnetcore.webutilities/10.0.15/microsoft.aspnetcore.webutilities.10.0.15.nupkg",
+      "sha512": "6db4e30615808bb866bf3f5aae3b41caf7edfde320621cb90c2ea804df85a8e8a4dcdb7c25a2e10dac1a07630b7eb2c8bba28052769f9d297c61ce676d789f31",
+      "asset": "lib/net10.0/Microsoft.AspNetCore.WebUtilities.dll"
+    },
+    {
+      "name": "Microsoft.Net.Http.Headers",
+      "version": "10.0.15",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.net.http.headers/10.0.15/microsoft.net.http.headers.10.0.15.nupkg",
+      "sha512": "7ae996488428ca3786c790ae8c4e1f8e5df52e669714b757652a0624b6faf7988b4a8050c23a1a465eda00c9b73f3d4552d16eef0cdc830ed0a92e1930e7420f",
+      "asset": "lib/net10.0/Microsoft.Net.Http.Headers.dll"
+    },
+    {
+      "name": "Microsoft.Extensions.Primitives",
+      "version": "10.0.15",
+      "source": "https://api.nuget.org/v3-flatcontainer/microsoft.extensions.primitives/10.0.15/microsoft.extensions.primitives.10.0.15.nupkg",
+      "sha512": "33850928f4155d2e2e2087fb837704c8f4d26aed21296a7ac177453a867d8bbfb088071f89e023bde634aa4d49634ddcdcea718f7afe88b4734ca75f5cb000b3",
+      "asset": "lib/net10.0/Microsoft.Extensions.Primitives.dll"
+    }
+  ]
+}

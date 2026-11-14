@@ -298,10 +298,14 @@ test("Hub build context is source-only", async () => {
 });
 
 
-test("diagnostic image inherits the pinned runtime without changing its execution configuration", async () => {
+test("diagnostic servicing preserves execution policy and pins its Microsoft dependency closure", async () => {
   const source = await read("../Dockerfile");
+  assert.match(source, /FROM ghcr\.io\/matheuskshn\/devtunnel-toolkit-hub@sha256:[a-f0-9]{64} AS diagnostic-base/);
   const diagnostic = source.slice(source.lastIndexOf("\nFROM ") + 1);
-  assert.match(diagnostic, /^FROM ghcr\.io\/matheuskshn\/devtunnel-toolkit-hub@sha256:[a-f0-9]{64} AS diagnostic/m);
-  assert.deepEqual([...diagnostic.matchAll(/^COPY --from=build \/build\/dist\/([a-z-]+\.js) \/opt\/hub\/dist\/\1$/gm)].map(match => match[1]).sort(), ["manager.js", "relay-diagnostics.js", "worker.js"]);
-  assert.doesNotMatch(diagnostic, /^(?:ENV|USER|ENTRYPOINT|CMD|EXPOSE|VOLUME|RUN|HEALTHCHECK)\s/m);
+  assert.doesNotMatch(diagnostic, /^(?:ENV|ENTRYPOINT|CMD|EXPOSE|VOLUME|HEALTHCHECK)\s/m);
+  assert.match(diagnostic, /USER 1000:1000\nRUN task_home=/);
+  assert.match(diagnostic, /--only-upgrade apt/);
+  const patches = JSON.parse(await read("../bin/cli-library-patches.json"));
+  assert.deepEqual(patches.packages.map(p => p.name), ["Microsoft.AspNetCore.WebUtilities", "Microsoft.Net.Http.Headers", "Microsoft.Extensions.Primitives"]);
+  assert.ok(patches.packages.every(p => p.version === "10.0.15" && /^[a-f0-9]{128}$/.test(p.sha512)));
 });

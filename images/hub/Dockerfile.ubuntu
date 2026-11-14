@@ -13,9 +13,14 @@ FROM node:24-trixie-slim@sha256:6950b66b4c0cb0151ce89fa75074673850763d096b044f42
 ARG TARGETARCH
 ARG DEVTUNNEL_VERSION=1.0.2115
 ARG DEVTUNNEL_SHA256
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libicu76
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libicu76 unzip
 COPY bin/managed-cli.mjs bin/install-managed-cli.mjs bin/devtunnel-runtime.json /build-tools/
 RUN node /build-tools/install-managed-cli.mjs "$TARGETARCH" "$DEVTUNNEL_VERSION" "$DEVTUNNEL_SHA256"
+COPY bin/service-cli-libraries.mjs bin/cli-library-patches.json /build-tools/
+RUN node /build-tools/service-cli-libraries.mjs /out/cli /out/evidence/packaging.json /serviced \
+    && cp -a /serviced/cli/. /out/cli/ \
+    && cp -a /serviced/evidence/. /out/evidence/ \
+    && cp /build-tools/cli-library-patches.json /out/evidence/cli-library-patches.json
 
 # Same Ubuntu ABI as the runtime. Sources are checksum-pinned, compiled, tested
 # and packaged with ownership/provenance; never overlay untracked shared objects.
@@ -92,8 +97,30 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=15s CMD ["hub", "health"]
 ENTRYPOINT ["/usr/bin/tini", "-g", "--", "/usr/local/bin/hub"]
 CMD ["serve"]
 
-# Diagnostic-only branch: preserve the deployed runtime and replace only error reporting.
-FROM ghcr.io/matheuskshn/devtunnel-toolkit-hub@sha256:9d737c8712cb543923aa457361682f66304ab320ec36266e3d5a512ffa8ff4aa AS diagnostic
+# Diagnostic branch: preserve the deployed runtime while servicing the blocked libraries.
+FROM ghcr.io/matheuskshn/devtunnel-toolkit-hub@sha256:9d737c8712cb543923aa457361682f66304ab320ec36266e3d5a512ffa8ff4aa AS diagnostic-base
+FROM node:24-trixie-slim@sha256:6950b66b4c0cb0151ce89fa75074673850763d096b044f422c6729b588dd4956 AS cli-servicing
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=diagnostic-base /opt/devtunnel/cli/ /source/cli/
+COPY --from=diagnostic-base /opt/devtunnel/evidence/packaging.json /source/packaging.json
+COPY bin/service-cli-libraries.mjs bin/cli-library-patches.json /service/
+RUN node /service/service-cli-libraries.mjs /source/cli /source/packaging.json /serviced
+
+FROM diagnostic-base AS diagnostic
+USER 0:0
+RUN apt-get update && apt-get install -y --no-install-recommends --only-upgrade apt \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=cli-servicing /serviced/cli/ /opt/devtunnel/cli/
+COPY --from=cli-servicing /serviced/evidence/ /opt/devtunnel/evidence/
+COPY bin/cli-library-patches.json /opt/devtunnel/evidence/cli-library-patches.json
 COPY --from=build /build/dist/relay-diagnostics.js /opt/hub/dist/relay-diagnostics.js
 COPY --from=build /build/dist/worker.js /opt/hub/dist/worker.js
 COPY --from=build /build/dist/manager.js /opt/hub/dist/manager.js
+USER 1000:1000
+RUN task_home="$(mktemp -d /tmp/cli-servicing-smoke.XXXXXXXX)" \
+    && mkdir -p "$task_home/.config" "$task_home/.local/share" "$task_home/.cache" \
+    && HOME="$task_home" XDG_CONFIG_HOME="$task_home/.config" \
+       XDG_DATA_HOME="$task_home/.local/share" XDG_CACHE_HOME="$task_home/.cache" \
+       devtunnel --help > /dev/null \
+    && rm -rf "$task_home"
