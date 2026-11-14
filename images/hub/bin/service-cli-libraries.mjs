@@ -1,7 +1,7 @@
 // Service only the checksum-pinned Microsoft library closure identified by the pinned advisory.
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-import {cpSync,mkdirSync,mkdtempSync,readFileSync,rmSync,writeFileSync} from 'node:fs';
+import {cpSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -39,7 +39,7 @@ export function serviceCliLibraries(input,output,evidence,manifest,assets) {
     }
   }
   mkdirSync(output);
-  cpSync(input,output,{recursive:true,errorOnExist:true,force:false});
+  for(const entry of readdirSync(input))cpSync(path.join(input,entry),path.join(output,entry),{recursive:true,errorOnExist:true,force:false});
   for(const p of prepared)writeFileSync(path.join(output,p.filename),p.bytes,{mode:0o644});
   writeFileSync(path.join(output,'devtunnel.deps.json'),JSON.stringify(deps,null,2)+'\n');
   requireCondition(digest(readFileSync(path.join(output,core.name)))===core.sha256,'CLI_SERVICING_CORE_CHANGED');
